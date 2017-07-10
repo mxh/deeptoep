@@ -1,4 +1,5 @@
 from game import *
+import os
 import ipdb
 import numpy as np
 import tensorflow as tf
@@ -69,31 +70,43 @@ class ToepQNetwork:
     # this is not explicitly modelled right now.
     def __init__(self):
         self.state_size = 144
-        self.state_input = tf.placeholder(shape=[None, self.state_size], dtype=tf.float32)
-        self.res_input = tf.reshape(self.state_input, shape=[-1, 1, 144])
-        self.hidden_1 = slim.fully_connected(self.res_input, 256, activation_fn=tf.nn.relu)
-        self.hidden_2 = slim.fully_connected(self.hidden_1,    512, activation_fn=tf.nn.relu)
+        with tf.variable_scope('Input'):
+            self.state_input = tf.placeholder(shape=[None, self.state_size], dtype=tf.float32)
+            self.res_input = tf.reshape(self.state_input, shape=[-1, 1, 144])
+        with tf.variable_scope('FeatureExtraction'):
+            self.hidden_1 = slim.fully_connected(self.res_input, 256, activation_fn=tf.nn.relu, scope='FeatureExtraction/Hidden1')
+            self.hidden_2 = slim.fully_connected(self.hidden_1,  512, activation_fn=tf.nn.relu, scope='FeatureExtraction/Hidden2')
 
         # split output into two streams; one for advantage and one for value
-        self.advantage_hidden_nested, self.value_hidden_nested = tf.split(self.hidden_2, 2, 2)
-        self.advantage_hidden = slim.flatten(self.advantage_hidden_nested)
-        self.value_hidden = slim.flatten(self.value_hidden_nested)
-        self.advantage = slim.fully_connected(self.advantage_hidden, 4, activation_fn=None)
-        self.value     = slim.fully_connected(self.value_hidden, 1, activation_fn=None)
+        with tf.variable_scope('AVSeparation'):
+            self.advantage_hidden_nested, self.value_hidden_nested = tf.split(self.hidden_2, 2, 2)
 
-        self.Q_predict = self.value + tf.subtract(self.advantage, tf.reduce_mean(self.advantage, axis=1, keep_dims=True))
-        self.a_predict = tf.argmax(self.Q_predict, 1)
+        with tf.variable_scope('Advantage'):
+            self.advantage_hidden = slim.flatten(self.advantage_hidden_nested)
+            self.advantage = slim.fully_connected(self.advantage_hidden, 4, activation_fn=None)
+        with tf.variable_scope('Value'):
+            self.value_hidden = slim.flatten(self.value_hidden_nested)
+            self.value     = slim.fully_connected(self.value_hidden, 1, activation_fn=None)
 
-        self.target_Q = tf.placeholder(shape=[None], dtype=tf.float32)
-        self.actions = tf.placeholder(shape=[None], dtype=tf.int32)
-        self.actions_one_hot = tf.one_hot(self.actions, 4, dtype=tf.float32)
+        with tf.variable_scope('Prediction'):
+            self.Q_predict = self.value + tf.subtract(self.advantage, tf.reduce_mean(self.advantage, axis=1, keep_dims=True))
+            self.a_predict = tf.argmax(self.Q_predict, 1)
+
+        with tf.variable_scope('TargetQ'):
+            self.target_Q = tf.placeholder(shape=[None], dtype=tf.float32)
+        with tf.variable_scope('Actions'):
+            self.actions = tf.placeholder(shape=[None], dtype=tf.int32)
+            self.actions_one_hot = tf.one_hot(self.actions, 4, dtype=tf.float32)
 
         self.Q = tf.reduce_sum(tf.multiply(self.Q_predict, self.actions_one_hot), axis=1)
         self.td_error = tf.square(self.target_Q - self.Q)
         self.loss = tf.reduce_mean(self.td_error)
 
-        self.trainer = tf.train.AdamOptimizer(learning_rate=0.0001)
-        self.update_model = self.trainer.minimize(self.loss)
+        tf.summary.scalar('loss', self.loss)
+
+        with tf.variable_scope('Trainer'):
+            self.trainer = tf.train.AdamOptimizer(learning_rate=0.0001)
+            self.update_model = self.trainer.minimize(self.loss)
 
 class ToepExperienceBuffer:
     def __init__(self, buffer_size=50000):
@@ -111,10 +124,11 @@ class ToepExperienceBuffer:
 def update_target_network_op(variables, tau):
     n_variables = len(variables)
     ops = []
-    for idx, var in enumerate(variables[0:n_variables // 2]):
-        ops.append(variables[idx + n_variables // 2].assign(\
-            (var.value() * tau) + ((1 - tau) * variables[idx + n_variables // 2].value())\
-        ))
+    with tf.variable_scope('TargetNetworkUpdate'):
+        for idx, var in enumerate(variables[0:n_variables // 2]):
+            ops.append(variables[idx + n_variables // 2].assign(\
+                (var.value() * tau) + ((1 - tau) * variables[idx + n_variables // 2].value())\
+            ))
     return ops
 
 class ToepQNetworkTrainer:
@@ -123,17 +137,21 @@ class ToepQNetworkTrainer:
         self.start_e = 1
         self.end_e = 0.1
         self.e_steps = 10000
-        self.pretrain_steps = 10000
+        self.pretrain_steps = 1000
         self.n_episodes = 10000
         self.batch_size = 32
         self.gamma = 0.9
+        self.save_path = '/home/moos/jobhunt/practice/toepen/nets'
+        self.log_path = '/home/moos/jobhunt/practice/toepen/logs'
 
         self.reset()
 
     def reset(self):
         tf.reset_default_graph()
-        self.main_net = ToepQNetwork()
-        self.target_net = ToepQNetwork()
+        with tf.variable_scope('MainNet'):
+            self.main_net = ToepQNetwork()
+        with tf.variable_scope('TargetNet'):
+            self.target_net = ToepQNetwork()
 
         self.init = tf.global_variables_initializer()
         self.saver = tf.train.Saver()
@@ -152,7 +170,12 @@ class ToepQNetworkTrainer:
         self.n_steps = 0
         self.r_list = [[], []]
 
-        self.session = tf.Session(config=tf.ConfigProto(log_device_placement=True))
+        self.summary = tf.summary.merge_all()
+
+        self.session = tf.Session(config=tf.ConfigProto(log_device_placement=False))
+
+        self.summary_writer = tf.summary.FileWriter(self.log_path, self.session.graph)
+
         self.session.run(self.init)
 
     def play_round(self, game, action):
@@ -171,7 +194,79 @@ class ToepQNetworkTrainer:
 
         return next_game
 
-    def train(self, n_episodes):
+    def play_round_random(self, game, action):
+        orig_player = game.current_player
+        next_game = game.move(action)
+        if next_game.winner != None:
+            return next_game
+        next_state = ToepState(next_game)
+        while next_game.current_player != orig_player and next_game.winner == None:
+            valid_actions = next_game.get_valid_actions()
+            action = valid_actions[np.random.randint(0, len(valid_actions))]
+            next_game = next_game.move(action)
+            next_state = ToepState(next_game)
+
+        return next_game
+
+    def test_against_random(self):
+        n_games = 100
+        n_actions = 0
+        n_invalid_actions = 0
+        n_wins = 0
+        # games where player starts
+        for episode_idx in range(0, n_games / 2):
+            game = ToepGame()
+            state = ToepState(game)
+
+            while game.winner == None:
+                # select action according to greedy policy
+                valid_actions = game.get_valid_actions()
+                action = self.session.run(self.main_net.a_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
+                n_actions += 1
+                if action not in valid_actions:
+                    action = valid_actions[np.random.randint(0, len(valid_actions))]
+                    n_invalid_actions += 1
+
+                game_next = self.play_round_random(game, action)
+                state_next = ToepState(game_next)
+                if game_next.winner == game.current_player:
+                    n_wins += 1
+                    break
+                elif game_next.winner != None:
+                    break
+
+                game = game_next
+                state = ToepState(game)
+        # games where player is second
+        for episode_idx in range(0, n_games / 2):
+            game = ToepGame()
+
+            valid_actions = game.get_valid_actions()
+            action = valid_actions[np.random.randint(0, len(valid_actions))]
+            game = game.move(action)
+            state = ToepState(game)
+
+            while game.winner == None:
+                # select action according to greedy policy
+                valid_actions = game.get_valid_actions()
+                action = self.session.run(self.main_net.a_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
+                n_actions += 1
+                if action not in valid_actions:
+                    action = valid_actions[np.random.randint(0, len(valid_actions))]
+                    n_invalid_actions += 1
+
+                game_next = self.play_round_random(game, action)
+                state_next = ToepState(game_next)
+                if game_next.winner == game.current_player:
+                    n_wins += 1
+                    break
+                elif game_next.winner != None:
+                    break
+
+                game = game_next
+                state = ToepState(game)
+
+        return [float(n_wins) / n_games, float(n_invalid_actions) / n_actions]
 
     def train_episode(self):
         game = ToepGame()
@@ -232,14 +327,20 @@ class ToepQNetworkTrainer:
 
         return game
 
+    def train(self, n_episodes):
+        with tf.device('/gpu:0'):
+            for episode_idx in range(0, 10000):
+                game = trainer.train_episode()
+
+                if episode_idx % 100 == 0:
+                    test_result = self.test_against_random()
+                    print("Episode {0}, mean reward against random: {1}, ratio of invalid actions: {2}".format(episode_idx, test_result[0], test_result[1]))
+                    #print(str(game))
+                if episode_idx > 0 and episode_idx % 1000 == 0:
+                    self.saver.save(self.session, os.path.join(self.save_path, "model_{0:02d}.ckpt".format(episode_idx)))
+                    print("Saved model")
+
 if __name__=="__main__":
     trainer = ToepQNetworkTrainer()
 
-    with tf.device('/gpu:0'):
-        for episode_idx in range(0, 10000):
-            game = trainer.train_episode()
-
-            if episode_idx % 100 == 0:
-                print("Episode {0}, mean reward player 1: {1}".format(episode_idx, np.mean(trainer.r_list[0])))
-                print("Episode {0}, mean reward player 2: {1}".format(episode_idx, np.mean(trainer.r_list[1])))
-                print(str(game))
+    trainer.train(20000)
