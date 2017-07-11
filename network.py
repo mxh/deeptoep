@@ -120,7 +120,7 @@ class ToepExperienceBuffer:
         self.buffer.extend(experience)
 
     def sample(self, size):
-        return np.reshape(np.array(random.sample(self.buffer, size)), [size, 5])
+        return np.reshape(np.array(random.sample(self.buffer, size)), [size, 6])
 
 def update_target_network_op(variables, tau):
     n_variables = len(variables)
@@ -149,7 +149,7 @@ class ToepQNetworkTrainer:
         self.start_e = 1
         self.end_e = 0.1
         self.e_steps = 10000
-        self.pretrain_steps = 10000
+        self.pretrain_steps = 1000
         self.n_episodes = 100000
         self.batch_size = 128
         self.gamma = 0.9
@@ -247,11 +247,11 @@ class ToepQNetworkTrainer:
             while game.winner == None:
                 # select action according to greedy policy
                 valid_actions = game.get_valid_actions()
-                action = self.session.run(self.main_net.a_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
+                Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
+                value_sorted_actions = sorted(range(0, len(Q)), key=lambda x: -Q[x])
+                valid_value_sorted_actions = [action for action in value_sorted_actions if action in valid_actions]
+                action = valid_value_sorted_actions[0]
                 n_actions += 1
-                if action not in valid_actions:
-                    action = valid_actions[np.random.randint(0, len(valid_actions))]
-                    n_invalid_actions += 1
 
                 game_next = self.play_round_random(game, action)
                 state_next = ToepState(game_next)
@@ -275,11 +275,11 @@ class ToepQNetworkTrainer:
             while game.winner == None:
                 # select action according to greedy policy
                 valid_actions = game.get_valid_actions()
-                action = self.session.run(self.main_net.a_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
+                Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
+                value_sorted_actions = sorted(range(0, len(Q)), key=lambda x: -Q[x])
+                valid_value_sorted_actions = [action for action in value_sorted_actions if action in valid_actions]
+                action = valid_value_sorted_actions[0]
                 n_actions += 1
-                if action not in valid_actions:
-                    action = valid_actions[np.random.randint(0, len(valid_actions))]
-                    n_invalid_actions += 1
 
                 game_next = self.play_round_random(game, action)
                 state_next = ToepState(game_next)
@@ -308,14 +308,21 @@ class ToepQNetworkTrainer:
             if np.random.rand(1) < self.e or self.n_steps < self.pretrain_steps:
                 action = valid_actions[np.random.randint(0, len(valid_actions))]
             else:
-                Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec]})
-                if action not in valid_actions:
-                    print("Chose action {0}, which is an invalid action (valid actions are {1}). Q: {2}".format(action, valid_actions, Q))
-                    invalid = True
-                    invalid_action = action # if the network selects an invalid action, we add this to the ep buffer as a "bad thing"
-                    action = valid_actions[np.random.randint(0, len(valid_actions))]
+                Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
+                value_sorted_actions = sorted(range(0, len(Q)), key=lambda x: -Q[x])
+                valid_value_sorted_actions = [action for action in value_sorted_actions if action in valid_actions]
+                action = valid_value_sorted_actions[0]
+                #if action not in valid_actions:
+                #    print("Chose action {0}, which is an invalid action (valid actions are {1}). Q: {2}".format(action, valid_actions, Q))
+                #    invalid = True
+                #    invalid_action = action # if the network selects an invalid action, we add this to the ep buffer as a "bad thing"
+                #    action = valid_actions[np.random.randint(0, len(valid_actions))]
 
             game_next = self.play_round(game, action)
+            next_valid_actions = game_next.get_valid_actions()
+            next_valid_actions_np = np.zeros([4])
+            next_valid_actions_np[0:len(next_valid_actions)] = next_valid_actions
+            next_valid_actions_np[len(next_valid_actions):] = -1
             state_next = ToepState(game_next)
             reward = 0
             if game_next.winner == game.current_player:
@@ -326,10 +333,10 @@ class ToepQNetworkTrainer:
             has_winner = game_next.winner != None
 
             self.n_steps += 1
-            ep_buffer.add(np.reshape(np.array([state.state_vec, action, reward, state_next.state_vec, has_winner]), [1, 5]))
+            ep_buffer.add(np.reshape(np.array([state.state_vec, action, reward, state_next.state_vec, next_valid_actions_np, has_winner]), [1, 6]))
 
             if invalid:
-                ep_buffer.add(np.reshape(np.array([state.state_vec, invalid_action, -1, np.zeros([144]), True]), [1, 5]))
+                ep_buffer.add(np.reshape(np.array([state.state_vec, invalid_action, -1, np.zeros([144]), np.full([4], -1), True]), [1, 6]))
 
             if self.n_steps > self.pretrain_steps:
                 
@@ -338,13 +345,26 @@ class ToepQNetworkTrainer:
 
                 train_batch = self.experience_buffer.sample(self.batch_size)
 
-                action_predict = self.session.run(self.main_net.a_predict, feed_dict={self.main_net.state_input: np.vstack(train_batch[:, 3])})
-                value_predict = self.session.run(self.target_net.Q_predict, feed_dict={self.target_net.state_input: np.vstack(train_batch[:, 3])})
+                main_val_predict   = self.session.run(self.main_net.Q_predict,   feed_dict={self.main_net.state_input:   np.vstack(train_batch[:, 3])})
+                #print("valid_actions: {0}".format(train_batch[0, 4]))
+                #print("main_val_predict: {0}".format(main_val_predict[0]))
+                value_sorted_actions = np.argsort(-main_val_predict)
+                #print("value_sorted_actions: {0}".format(value_sorted_actions[0]))
+                valid_value_sorted_actions = np.full([self.batch_size, 4], False)
+                for row_idx in range(0, self.batch_size):
+                    valid_value_sorted_actions[row_idx, :] = np.isin(value_sorted_actions[row_idx, :], train_batch[row_idx, 4])
 
-                end_multiplier = -(train_batch[:, 4] - 1)
+                #print("valid_value_sorted_actions: {0}".format(valid_value_sorted_actions[0]))
+                action_predict = value_sorted_actions[range(self.batch_size), np.argmax(valid_value_sorted_actions, axis=1)]
+                #print("action_predict: {0}".format(action_predict[0]))
+                #action = valid_value_sorted_actions[0]
+
+                target_val_predict = self.session.run(self.target_net.Q_predict, feed_dict={self.target_net.state_input: np.vstack(train_batch[:, 3])})
+
+                end_multiplier = -(train_batch[:, 5] - 1)
 
                 # was: double_Q = value_predict[range(self.batch_size), action_predict]
-                double_Q = value_predict[range(self.batch_size), action_predict]
+                double_Q = target_val_predict[range(self.batch_size), action_predict]
                 target_Q = train_batch[:, 2] + (self.gamma * double_Q * end_multiplier)
 
                 _ = self.session.run(self.main_net.update_model, \
