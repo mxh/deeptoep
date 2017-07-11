@@ -4,6 +4,7 @@ import ipdb
 import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
+from timeit import default_timer as timer
 
 def card_to_one_hot(card):
     if (card == []):
@@ -74,8 +75,8 @@ class ToepQNetwork:
             self.state_input = tf.placeholder(shape=[None, self.state_size], dtype=tf.float32)
             self.res_input = tf.reshape(self.state_input, shape=[-1, 1, 144])
         with tf.variable_scope('FeatureExtraction'):
-            self.hidden_1 = slim.fully_connected(self.res_input, 256, activation_fn=tf.nn.relu, scope='FeatureExtraction/Hidden1')
-            self.hidden_2 = slim.fully_connected(self.hidden_1,  512, activation_fn=tf.nn.relu, scope='FeatureExtraction/Hidden2')
+            self.hidden_1   = slim.fully_connected(self.res_input, 256, activation_fn=tf.nn.relu, scope='FeatureExtraction/Hidden1')
+            self.hidden_2   = slim.fully_connected(self.hidden_1,  256, activation_fn=tf.nn.relu, scope='FeatureExtraction/Hidden2')
 
         # split output into two streams; one for advantage and one for value
         with tf.variable_scope('AVSeparation'):
@@ -89,8 +90,8 @@ class ToepQNetwork:
             self.value     = slim.fully_connected(self.value_hidden, 1, activation_fn=None)
 
         with tf.variable_scope('Prediction'):
-            self.Q_predict = self.value + tf.subtract(self.advantage, tf.reduce_mean(self.advantage, axis=1, keep_dims=True))
-            self.a_predict = tf.argmax(self.Q_predict, 1)
+            self.Q_predict = tf.nn.softmax(self.value + tf.subtract(self.advantage, tf.reduce_mean(self.advantage, axis=1, keep_dims=True)))
+            self.a_predict = tf.argmax(self.Q_predict, 1) # we will phase this out, as this does not take into account action validity
 
         with tf.variable_scope('TargetQ'):
             self.target_Q = tf.placeholder(shape=[None], dtype=tf.float32)
@@ -105,7 +106,7 @@ class ToepQNetwork:
         tf.summary.scalar('loss', self.loss)
 
         with tf.variable_scope('Trainer'):
-            self.trainer = tf.train.AdamOptimizer(learning_rate=0.00025)
+            self.trainer = tf.train.AdamOptimizer(learning_rate=0.001)
             self.update_model = self.trainer.minimize(self.loss)
 
 class ToepExperienceBuffer:
@@ -131,18 +132,30 @@ def update_target_network_op(variables, tau):
             ))
     return ops
 
+def get_number_of_variables():
+    total_parameters = 0
+    for variable in tf.trainable_variables():
+        # shape is an array of tf.Dimension
+        shape = variable.get_shape()
+        variable_parameters = 1
+        for dim in shape:
+            variable_parameters *= dim.value
+        total_parameters += variable_parameters
+    return total_parameters
+
 class ToepQNetworkTrainer:
     def __init__(self):
-        self.tau = 0.001
+        self.tau = 0.01
         self.start_e = 1
         self.end_e = 0.1
-        self.e_steps = 1000000
-        self.pretrain_steps = 50000
-        self.n_episodes = 1000000
-        self.batch_size = 32
+        self.e_steps = 10000
+        self.pretrain_steps = 10000
+        self.n_episodes = 100000
+        self.batch_size = 128
         self.gamma = 0.9
-        self.save_path = '/home/moos/jobhunt/practice/toepen/nets'
-        self.log_path = '/home/moos/jobhunt/practice/toepen/logs'
+        self.save_path = '/jobhunt/practice/toepen/nets'
+        self.log_path = '/jobhunt/practice/toepen/logs'
+        self.load_model = False
 
         self.reset()
 
@@ -172,11 +185,22 @@ class ToepQNetworkTrainer:
 
         self.summary = tf.summary.merge_all()
 
-        self.session = tf.Session(config=tf.ConfigProto(log_device_placement=False))
+        config = tf.ConfigProto(log_device_placement=False)
+        config.gpu_options.allow_growth = True
+        self.session = tf.Session(config=config)
 
         self.summary_writer = tf.summary.FileWriter(self.log_path, self.session.graph)
 
         self.session.run(self.init)
+
+        print("Number of parameters:  {0}".format(get_number_of_variables()))
+
+        if self.load_model:
+            print("Loading model...")
+            ckpt = tf.train.get_checkpoint_state(self.save_path)
+            self.saver.restore(self.session, ckpt.model_checkpoint_path)
+
+            self.e = self.e - (self.step_drop * self.pretrain_steps)
 
     def play_round(self, game, action):
         orig_player = game.current_player
@@ -198,6 +222,7 @@ class ToepQNetworkTrainer:
         orig_player = game.current_player
         next_game = game.move(action)
         if next_game.winner != None:
+            next_game.current_player = orig_player
             return next_game
         next_state = ToepState(next_game)
         while next_game.current_player != orig_player and next_game.winner == None:
@@ -210,12 +235,13 @@ class ToepQNetworkTrainer:
 
     def test_against_random(self):
         n_games = 100
+        games = [ToepGame() for _ in range(0, n_games)]
         n_actions = 0
         n_invalid_actions = 0
         n_wins = 0
         # games where player starts
-        for episode_idx in range(0, n_games / 2):
-            game = ToepGame()
+        for episode_idx in range(0, n_games):
+            game = games[episode_idx].copy()
             state = ToepState(game)
 
             while game.winner == None:
@@ -238,8 +264,8 @@ class ToepQNetworkTrainer:
                 game = game_next
                 state = ToepState(game)
         # games where player is second
-        for episode_idx in range(0, n_games / 2):
-            game = ToepGame()
+        for episode_idx in range(0, n_games):
+            game = games[episode_idx].copy()
 
             valid_actions = game.get_valid_actions()
             action = valid_actions[np.random.randint(0, len(valid_actions))]
@@ -266,7 +292,7 @@ class ToepQNetworkTrainer:
                 game = game_next
                 state = ToepState(game)
 
-        return [float(n_wins) / n_games, float(n_invalid_actions) / n_actions]
+        return [float(n_wins) / (2 * n_games), float(n_invalid_actions) / n_actions]
 
     def train_episode(self):
         game = ToepGame()
@@ -278,11 +304,15 @@ class ToepQNetworkTrainer:
         while game.winner == None:
             # select action according to eps-greedy policy
             valid_actions = game.get_valid_actions()
+            invalid = False
             if np.random.rand(1) < self.e or self.n_steps < self.pretrain_steps:
                 action = valid_actions[np.random.randint(0, len(valid_actions))]
             else:
-                action = self.session.run(self.main_net.a_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
+                Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec]})
                 if action not in valid_actions:
+                    print("Chose action {0}, which is an invalid action (valid actions are {1}). Q: {2}".format(action, valid_actions, Q))
+                    invalid = True
+                    invalid_action = action # if the network selects an invalid action, we add this to the ep buffer as a "bad thing"
                     action = valid_actions[np.random.randint(0, len(valid_actions))]
 
             game_next = self.play_round(game, action)
@@ -298,7 +328,11 @@ class ToepQNetworkTrainer:
             self.n_steps += 1
             ep_buffer.add(np.reshape(np.array([state.state_vec, action, reward, state_next.state_vec, has_winner]), [1, 5]))
 
+            if invalid:
+                ep_buffer.add(np.reshape(np.array([state.state_vec, invalid_action, -1, np.zeros([144]), True]), [1, 5]))
+
             if self.n_steps > self.pretrain_steps:
+                
                 if self.e > self.end_e:
                     self.e -= self.step_drop
 
@@ -339,7 +373,6 @@ class ToepQNetworkTrainer:
                 if episode_idx % 100 == 0:
                     test_result = self.test_against_random()
                     print("Episode {0}, mean reward against random: {1}, ratio of invalid actions: {2}".format(episode_idx, test_result[0], test_result[1]))
-                    #print(str(game))
                 if episode_idx > 0 and episode_idx % 1000 == 0:
                     self.saver.save(self.session, os.path.join(self.save_path, "model_{0:02d}.ckpt".format(episode_idx)))
                     print("Saved model")
