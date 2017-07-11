@@ -71,16 +71,21 @@ class ToepQNetwork:
     # this is not explicitly modelled right now.
     def __init__(self):
         self.state_size = 144
+        self.training = True
         with tf.variable_scope('Input'):
             self.state_input = tf.placeholder(shape=[None, self.state_size], dtype=tf.float32)
             self.res_input = tf.reshape(self.state_input, shape=[-1, 1, 144])
         with tf.variable_scope('FeatureExtraction'):
-            self.hidden_1   = slim.fully_connected(self.res_input, 256, activation_fn=tf.nn.relu, scope='FeatureExtraction/Hidden1')
-            self.hidden_2   = slim.fully_connected(self.hidden_1,  256, activation_fn=tf.nn.relu, scope='FeatureExtraction/Hidden2')
+            self.hidden_1   = slim.fully_connected(self.res_input, 256, activation_fn=None, scope='FeatureExtraction/Hidden1')
+            self.bn_1       = slim.batch_norm(self.hidden_1, center=True, scale=True, is_training=self.training, scope='FeatureExtraction/BN1')
+            self.relu_1     = tf.nn.relu(self.bn_1, 'relu')
+            self.hidden_2   = slim.fully_connected(self.relu_1,    256, activation_fn=None, scope='FeatureExtraction/Hidden2')
+            self.bn_2       = slim.batch_norm(self.hidden_2, center=True, scale=True, is_training=self.training, scope='FeatureExtraction/BN2')
+            self.relu_2     = tf.nn.relu(self.bn_2, 'relu')
 
         # split output into two streams; one for advantage and one for value
         with tf.variable_scope('AVSeparation'):
-            self.advantage_hidden_nested, self.value_hidden_nested = tf.split(self.hidden_2, 2, 2)
+            self.advantage_hidden_nested, self.value_hidden_nested = tf.split(self.relu_2, 2, 2)
 
         with tf.variable_scope('Advantage'):
             self.advantage_hidden = slim.flatten(self.advantage_hidden_nested)
@@ -106,8 +111,10 @@ class ToepQNetwork:
         tf.summary.scalar('loss', self.loss)
 
         with tf.variable_scope('Trainer'):
-            self.trainer = tf.train.AdamOptimizer(learning_rate=0.001)
-            self.update_model = self.trainer.minimize(self.loss)
+            self.global_step = tf.Variable(0, trainable=False)
+            self.learning_rate = tf.train.polynomial_decay(0.1, self.global_step, 10000, 0.01, power=0.5)
+            self.trainer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
+            self.update_model = self.trainer.minimize(self.loss, global_step=self.global_step)
 
 class ToepExperienceBuffer:
     def __init__(self, buffer_size=1000000):
@@ -209,10 +216,11 @@ class ToepQNetworkTrainer:
             return next_game
         next_state = ToepState(next_game)
         while next_game.current_player != orig_player and next_game.winner == None:
-            action = self.session.run(self.main_net.a_predict, feed_dict={self.main_net.state_input: [next_state.state_vec]})[0]
             valid_actions = next_game.get_valid_actions()
-            if action not in valid_actions:
-                action = valid_actions[np.random.randint(0, len(valid_actions))]
+            Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [next_state.state_vec]})[0]
+            value_sorted_actions = sorted(range(0, len(Q)), key=lambda x: -Q[x])
+            valid_value_sorted_actions = [action for action in value_sorted_actions if action in valid_actions]
+            action = valid_value_sorted_actions[0]
             next_game = next_game.move(action)
             next_state = ToepState(next_game)
 
@@ -238,7 +246,8 @@ class ToepQNetworkTrainer:
         games = [ToepGame() for _ in range(0, n_games)]
         n_actions = 0
         n_invalid_actions = 0
-        n_wins = 0
+        n_wins_first = 0
+        n_wins_second = 0
         # games where player starts
         for episode_idx in range(0, n_games):
             game = games[episode_idx].copy()
@@ -256,13 +265,14 @@ class ToepQNetworkTrainer:
                 game_next = self.play_round_random(game, action)
                 state_next = ToepState(game_next)
                 if game_next.winner == game.current_player:
-                    n_wins += 1
+                    n_wins_first += 1
                     break
                 elif game_next.winner != None:
                     break
 
                 game = game_next
                 state = ToepState(game)
+            print(str(game_next))
         # games where player is second
         for episode_idx in range(0, n_games):
             game = games[episode_idx].copy()
@@ -284,7 +294,7 @@ class ToepQNetworkTrainer:
                 game_next = self.play_round_random(game, action)
                 state_next = ToepState(game_next)
                 if game_next.winner == game.current_player:
-                    n_wins += 1
+                    n_wins_second += 1
                     break
                 elif game_next.winner != None:
                     break
@@ -292,7 +302,7 @@ class ToepQNetworkTrainer:
                 game = game_next
                 state = ToepState(game)
 
-        return [float(n_wins) / (2 * n_games), float(n_invalid_actions) / n_actions]
+        return [float(n_wins_first) / n_games, float(n_wins_second) / n_games]
 
     def train_episode(self):
         game = ToepGame()
@@ -392,7 +402,7 @@ class ToepQNetworkTrainer:
 
                 if episode_idx % 100 == 0:
                     test_result = self.test_against_random()
-                    print("Episode {0}, mean reward against random: {1}, ratio of invalid actions: {2}".format(episode_idx, test_result[0], test_result[1]))
+                    print("Episode {0}  MR1 {1}  MR2 {2}  E {3}".format(episode_idx, test_result[0], test_result[1], self.e))
                 if episode_idx > 0 and episode_idx % 1000 == 0:
                     self.saver.save(self.session, os.path.join(self.save_path, "model_{0:02d}.ckpt".format(episode_idx)))
                     print("Saved model")
