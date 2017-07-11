@@ -105,11 +105,11 @@ class ToepQNetwork:
         tf.summary.scalar('loss', self.loss)
 
         with tf.variable_scope('Trainer'):
-            self.trainer = tf.train.AdamOptimizer(learning_rate=0.0001)
+            self.trainer = tf.train.AdamOptimizer(learning_rate=0.00025)
             self.update_model = self.trainer.minimize(self.loss)
 
 class ToepExperienceBuffer:
-    def __init__(self, buffer_size=50000):
+    def __init__(self, buffer_size=1000000):
         self.buffer = []
         self.buffer_size = buffer_size
 
@@ -119,7 +119,7 @@ class ToepExperienceBuffer:
         self.buffer.extend(experience)
 
     def sample(self, size):
-        return np.reshape(np.array(random.sample(self.buffer, size)), [size, 4])
+        return np.reshape(np.array(random.sample(self.buffer, size)), [size, 5])
 
 def update_target_network_op(variables, tau):
     n_variables = len(variables)
@@ -136,9 +136,9 @@ class ToepQNetworkTrainer:
         self.tau = 0.001
         self.start_e = 1
         self.end_e = 0.1
-        self.e_steps = 10000
-        self.pretrain_steps = 1000
-        self.n_episodes = 10000
+        self.e_steps = 1000000
+        self.pretrain_steps = 50000
+        self.n_episodes = 1000000
         self.batch_size = 32
         self.gamma = 0.9
         self.save_path = '/home/moos/jobhunt/practice/toepen/nets'
@@ -293,8 +293,10 @@ class ToepQNetworkTrainer:
             elif game_next.winner != None:
                 reward = -1
 
+            has_winner = game_next.winner != None
+
             self.n_steps += 1
-            ep_buffer.add(np.reshape(np.array([state.state_vec, action, reward, state_next.state_vec]), [1, 4]))
+            ep_buffer.add(np.reshape(np.array([state.state_vec, action, reward, state_next.state_vec, has_winner]), [1, 5]))
 
             if self.n_steps > self.pretrain_steps:
                 if self.e > self.end_e:
@@ -305,9 +307,11 @@ class ToepQNetworkTrainer:
                 action_predict = self.session.run(self.main_net.a_predict, feed_dict={self.main_net.state_input: np.vstack(train_batch[:, 3])})
                 value_predict = self.session.run(self.target_net.Q_predict, feed_dict={self.target_net.state_input: np.vstack(train_batch[:, 3])})
 
+                end_multiplier = -(train_batch[:, 4] - 1)
+
                 # was: double_Q = value_predict[range(self.batch_size), action_predict]
                 double_Q = value_predict[range(self.batch_size), action_predict]
-                target_Q = train_batch[:, 2] + (self.gamma * double_Q)
+                target_Q = train_batch[:, 2] + (self.gamma * double_Q * end_multiplier)
 
                 _ = self.session.run(self.main_net.update_model, \
                         feed_dict={self.main_net.state_input: np.vstack(train_batch[:, 0]),\
@@ -329,7 +333,7 @@ class ToepQNetworkTrainer:
 
     def train(self, n_episodes):
         with tf.device('/gpu:0'):
-            for episode_idx in range(0, 10000):
+            for episode_idx in range(0, self.n_episodes):
                 game = trainer.train_episode()
 
                 if episode_idx % 100 == 0:
