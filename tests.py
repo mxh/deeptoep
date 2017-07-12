@@ -58,7 +58,7 @@ def toep_state_test():
                          1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0,\
                          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,\
                          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,\
-                         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], dtype=np.float32)
+                         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], dtype=np.float32)
     print("Ret: {0}".format(state.state_vec))
     print("Exp: {0}".format(expected))
     test = np_cmp_test(expected, state.state_vec)
