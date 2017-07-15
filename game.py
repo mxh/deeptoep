@@ -92,7 +92,7 @@ class ToepGamePhase:
     def get_valid_actions(self):
         valid_actions = []
 
-        if self.game.betting_phase.last_player_to_raise != self.current_player:
+        if self.game.betting_phase.last_player_to_raise != self.current_player and self.game.stake < 5:
             valid_actions.append('t')
 
         if self.card_to_beat == None:
@@ -109,9 +109,9 @@ class ToepGamePhase:
 
     def move(self, action):
         game = self.game.copy()
-        [reward, game_finished] = game.game_phase.self_move(action)
+        [reward, player_finished, game_finished] = game.game_phase.self_move(action)
 
-        return [game, reward, game_finished]
+        return [game, reward, player_finished, game_finished]
 
     def self_move(self, action):
         assert(action in self.get_valid_actions())
@@ -135,15 +135,15 @@ class ToepGamePhase:
                 self.round_number += 1
                 if self.game_finished():
                     if self.card_to_beat[1] == self.current_player:
-                        return [self.game.stake, True]
+                        return [self.game.stake, True, True]
                     else:
-                        return [-self.game.stake, True]
+                        return [-self.game.stake, True, True]
                 else:
                     self.current_player = self.card_to_beat[1]
                 self.card_to_beat = None
             else:
                 self.next_player()
-        return [0, False]
+        return [0, False, False]
 
 
     def round_finished(self):
@@ -151,7 +151,8 @@ class ToepGamePhase:
         return np.all(table_lengths == table_lengths[0])
 
     def game_finished(self):
-        return self.round_finished() and self.round_number == 4
+        table_lengths = np.array([len(player.table) for player in self.game.players])
+        return np.all(table_lengths == 4)
 
     def next_player(self):
         self.current_player = (self.current_player + 1) % len(self.game.players)
@@ -179,38 +180,38 @@ class ToepBettingPhase:
     def get_valid_actions(self):
         valid_actions = ['c', 'f']
 
-        if self.last_player_to_raise != self.current_player:
+        if self.last_player_to_raise != self.current_player and self.game.stake < 5:
             valid_actions.append('t')
 
         return valid_actions
 
     def move(self, action):
         game = self.game.copy()
-        [reward, game_finished] = game.betting_phase.self_move(action)
+        [reward, player_finished, game_finished] = game.betting_phase.self_move(action)
 
-        return [game, reward, game_finished]
+        return [game, reward, player_finished, game_finished]
 
     def self_move(self, action):
         assert(action in self.get_valid_actions())
 
         reward = 0
         game_finished = False
+        player_finished = False
         if action == 't':
             self.game.stake += 1
             self.last_player_to_raise = self.current_player
         if action == 'f':
             self.game.players[self.current_player].did_fold = True
             reward = -(self.game.stake - 1)
+            player_finished = True
         self.next_player()
         if self.current_player == self.last_player_to_raise:
-            has_won_toep = np.all([self.game.players[player_idx].did_fold for player_idx in range(0, len(self.game.players)) if player_idx != self.current_player])
-            if has_won_toep:
-                reward = (self.game.stake - 1)
+            if self.game.get_winner() != None:
                 game_finished = True
-            else:
-                self.game.phase = self.game.game_phase
+                player_finished = True
+            self.game.phase = self.game.game_phase
 
-        return [reward, game_finished]
+        return [reward, player_finished, game_finished]
 
     def next_player(self):
         self.current_player = (self.current_player + 1) % len(self.game.players)
@@ -246,6 +247,16 @@ class ToepGame:
     def get_valid_actions(self):
         return self.phase.get_valid_actions()
 
+    def get_winner(self):
+        non_folded_players = [player_idx for player_idx in range(0, len(self.players)) if self.players[player_idx].did_fold == False]
+        if len(non_folded_players) == 1:
+            return non_folded_players[0]
+
+        if self.game_phase.game_finished():
+            return self.game_phase.card_to_beat[1]
+
+        return None
+
     def move(self, action):
         return self.phase.move(action)
 
@@ -275,11 +286,15 @@ def generate_episode(game, policy):
 
     return states
 
+def print_episode(episode):
+    for state in episode:
+        print(state)
+        print("-------")
+
 if __name__=="__main__":
     #ipdb.set_trace()
     policy = RandomPolicy()
     game = ToepGame(2)
     episode = generate_episode(game, policy)
-
-    for state in episode:
-        print(state)
+    
+    print_episode(episode)

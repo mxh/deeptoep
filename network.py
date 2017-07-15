@@ -62,13 +62,13 @@ class ToepState:
     # betting_phase (x1)
     # total 146
     def __init__(self, game):
-        current_player_hand = game.players[game.current_player].hand
-        table = [game.players[player_idx % len(game.players)].table for player_idx in range(game.current_player, game.current_player + len(game.players))]
+        current_player_hand = game.players[game.phase.current_player].hand
+        table = [game.players[player_idx % len(game.players)].table for player_idx in range(game.phase.current_player, game.phase.current_player + len(game.players))]
 
         current_player_hand_vec = cards_to_one_hot(current_player_hand, 4)
         table_vecs = [cards_to_one_hot(player_table, 4) for player_table in table]
         
-        self.state_vec = np.concatenate([current_player_hand_vec] + table_vecs + [np.array([game.stake])])
+        self.state_vec = np.concatenate([current_player_hand_vec] + table_vecs + [np.array([game.stake, 1 if game.phase == game.betting_phase else 0])])
 
 class ToepQNetwork:
     # the ToepQNetwork takes a state s, and outputs the expected value of
@@ -82,11 +82,11 @@ class ToepQNetwork:
             self.res_input = tf.reshape(self.state_input, shape=[-1, 1, self.state_size])
         with tf.variable_scope('FeatureExtraction'):
             self.hidden_1   = slim.fully_connected(self.res_input, 256, activation_fn=None, scope='FeatureExtraction/Hidden1')
-            self.bn_1       = slim.batch_norm(self.hidden_1, center=True, scale=True, is_training=self.training, scope='FeatureExtraction/BN1')
-            self.relu_1     = tf.nn.relu(self.bn_1, 'relu')
+            #self.bn_1       = slim.batch_norm(self.hidden_1, center=True, scale=True, is_training=self.training, scope='FeatureExtraction/BN1')
+            self.relu_1     = tf.nn.relu(self.hidden_1, 'relu')
             self.hidden_2   = slim.fully_connected(self.relu_1,    256, activation_fn=None, scope='FeatureExtraction/Hidden2')
-            self.bn_2       = slim.batch_norm(self.hidden_2, center=True, scale=True, is_training=self.training, scope='FeatureExtraction/BN2')
-            self.relu_2     = tf.nn.relu(self.bn_2, 'relu')
+            #self.bn_2       = slim.batch_norm(self.hidden_2, center=True, scale=True, is_training=self.training, scope='FeatureExtraction/BN2')
+            self.relu_2     = tf.nn.relu(self.hidden_2, 'relu')
 
         # split output into two streams; one for advantage and one for value
         with tf.variable_scope('AVSeparation'):
@@ -100,7 +100,7 @@ class ToepQNetwork:
             self.value     = slim.fully_connected(self.value_hidden, 1, activation_fn=None)
 
         with tf.variable_scope('Prediction'):
-            self.Q_predict = tf.nn.softmax(self.value + tf.subtract(self.advantage, tf.reduce_mean(self.advantage, axis=1, keep_dims=True)))
+            self.Q_predict = self.value + tf.subtract(self.advantage, tf.reduce_mean(self.advantage, axis=1, keep_dims=True))
             self.a_predict = tf.argmax(self.Q_predict, 1) # we will phase this out, as this does not take into account action validity
 
         with tf.variable_scope('TargetQ'):
@@ -117,9 +117,12 @@ class ToepQNetwork:
 
         with tf.variable_scope('Trainer'):
             self.global_step = tf.Variable(0, trainable=False)
-            self.learning_rate = tf.train.polynomial_decay(0.1, self.global_step, 10000, 0.01, power=0.5)
-            self.trainer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
-            self.update_model = self.trainer.minimize(self.loss, global_step=self.global_step)
+            self.learning_rate = tf.train.polynomial_decay(1e-5, self.global_step, 100000, 1e-6, power=0.5)
+
+            update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+            with tf.control_dependencies(update_ops):
+                self.trainer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
+                self.update_model = self.trainer.minimize(self.loss, global_step=self.global_step)
 
 class ToepExperienceBuffer:
     def __init__(self, buffer_size=1000000):
@@ -155,18 +158,25 @@ def get_number_of_variables():
         total_parameters += variable_parameters
     return total_parameters
 
+def get_highest_valid_action(Q, valid_actions):
+    value_sorted_actions = sorted(range(0, len(Q)), key=lambda x: -Q[x])
+    valid_value_sorted_actions = [action for action in value_sorted_actions if action_idx_to_name[action] in valid_actions]
+    action = action_idx_to_name[valid_value_sorted_actions[0]]
+
+    return action
+
 class ToepQNetworkTrainer:
     def __init__(self):
         self.tau = 0.01
         self.start_e = 1
         self.end_e = 0.1
-        self.e_steps = 10000
-        self.pretrain_steps = 1000
+        self.e_steps = 100000
+        self.pretrain_steps = 4000
         self.n_episodes = 100000
         self.batch_size = 128
         self.gamma = 0.9
-        self.save_path = '/jobhunt/practice/toepen/nets'
-        self.log_path = '/jobhunt/practice/toepen/logs'
+        self.save_path = '/home/moos/jobhunt/practice/toepen/nets'
+        self.log_path = '/home/moos/jobhunt/practice/toepen/logs'
         self.load_model = False
 
         self.reset()
@@ -212,104 +222,177 @@ class ToepQNetworkTrainer:
             ckpt = tf.train.get_checkpoint_state(self.save_path)
             self.saver.restore(self.session, ckpt.model_checkpoint_path)
 
-            self.e = self.e - (self.step_drop * self.pretrain_steps)
+            self.e = self.end_e#self.e - (self.step_drop * self.pretrain_steps)
+            self.step_drop = 0
 
     def play_round(self, game, action):
-        orig_player = game.current_player
-        next_game = game.move(action)
-        if next_game.winner != None:
-            return next_game
+        orig_player = game.phase.current_player
+        [next_game, reward, player_finished, game_finished] = game.move(action)
+        if player_finished:
+            return [next_game, reward, player_finished, game_finished]
+
         next_state = ToepState(next_game)
-        while next_game.current_player != orig_player and next_game.winner == None:
+        while next_game.phase.current_player != orig_player and not game_finished:
             valid_actions = next_game.get_valid_actions()
             Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [next_state.state_vec]})[0]
             value_sorted_actions = sorted(range(0, len(Q)), key=lambda x: -Q[x])
             valid_value_sorted_actions = [action for action in value_sorted_actions if action_idx_to_name[action] in valid_actions]
             action = action_idx_to_name[valid_value_sorted_actions[0]]
-            next_game = next_game.move(action)
+            [next_game, _, _, game_finished] = next_game.move(action)
             next_state = ToepState(next_game)
 
-        return next_game
+        if game_finished:
+            if next_game.get_winner() == orig_player:
+                reward = next_game.stake
+            else:
+                reward = -next_game.stake
+
+        return [next_game, reward, game_finished, game_finished]
 
     def play_round_random(self, game, action):
-        orig_player = game.current_player
-        next_game = game.move(action)
-        if next_game.winner != None:
-            next_game.current_player = orig_player
-            return next_game
-        next_state = ToepState(next_game)
+        orig_player = game.phase.current_player
+        [next_game, reward, player_finished, game_finished] = game.move(action)
+        if player_finished:
+            return [next_game, reward, player_finished, game_finished]
 
-        game_finished = False
-        while next_game.current_player != orig_player and next_game.winner == None:
+        next_state = ToepState(next_game)
+        while next_game.phase.current_player != orig_player and not game_finished:
             valid_actions = next_game.get_valid_actions()
             action = valid_actions[np.random.randint(0, len(valid_actions))]
-            [next_game, reward, game_finished] = next_game.move(action)
+            [next_game, _, _, game_finished] = next_game.move(action)
             next_state = ToepState(next_game)
 
-        return next_game
+        if game_finished:
+            if next_game.get_winner() == orig_player:
+                reward = next_game.stake
+            else:
+                reward = -next_game.stake
+
+        return [next_game, reward, game_finished, game_finished]
 
     def test_against_random(self):
         n_games = 100
         games = [ToepGame() for _ in range(0, n_games)]
         n_actions = 0
         n_invalid_actions = 0
-        n_wins_first = 0
-        n_wins_second = 0
+        overall_reward_first = 0
+        overall_reward_second = 0
         # games where player starts
         for episode_idx in range(0, n_games):
             game = games[episode_idx].copy()
             state = ToepState(game)
 
-            while game.winner == None:
+            game_finished = False
+            while not game_finished:
                 # select action according to greedy policy
                 valid_actions = game.get_valid_actions()
                 Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
                 value_sorted_actions = sorted(range(0, len(Q)), key=lambda x: -Q[x])
                 valid_value_sorted_actions = [action for action in value_sorted_actions if action_idx_to_name[action] in valid_actions]
                 action = action_idx_to_name[valid_value_sorted_actions[0]]
-                n_actions += 1
 
-                game_next = self.play_round_random(game, action)
+                [game_next, reward, player_finished, game_finished] = self.play_round_random(game, action)
                 state_next = ToepState(game_next)
-                if game_next.winner == game.current_player:
-                    n_wins_first += 1
-                    break
-                elif game_next.winner != None:
+                if player_finished:
+                    overall_reward_first += reward
                     break
 
                 game = game_next
                 state = ToepState(game)
-            print(str(game_next))
+
+            if episode_idx == 0:
+                print(str(game_next))
+
         # games where player is second
         for episode_idx in range(0, n_games):
             game = games[episode_idx].copy()
 
             valid_actions = game.get_valid_actions()
             action = valid_actions[np.random.randint(0, len(valid_actions))]
-            game = game.move(action)
+            [game, _, _, _] = game.move(action)
             state = ToepState(game)
 
-            while game.winner == None:
+            game_finished = False
+            while not game_finished:
                 # select action according to greedy policy
                 valid_actions = game.get_valid_actions()
                 Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
                 value_sorted_actions = sorted(range(0, len(Q)), key=lambda x: -Q[x])
                 valid_value_sorted_actions = [action for action in value_sorted_actions if action_idx_to_name[action] in valid_actions]
                 action = action_idx_to_name[valid_value_sorted_actions[0]]
-                n_actions += 1
 
-                game_next = self.play_round_random(game, action)
+                [game_next, reward, player_finished, game_finished] = self.play_round_random(game, action)
                 state_next = ToepState(game_next)
-                if game_next.winner == game.current_player:
-                    n_wins_second += 1
-                    break
-                elif game_next.winner != None:
+                if player_finished:
+                    overall_reward_second += reward
                     break
 
                 game = game_next
                 state = ToepState(game)
 
-        return [float(n_wins_first) / n_games, float(n_wins_second) / n_games]
+        return [float(overall_reward_first) / n_games, float(overall_reward_second) / n_games]
+
+    def test_against_self(self):
+        n_games = 100
+        games = [ToepGame() for _ in range(0, n_games)]
+        n_actions = 0
+        n_invalid_actions = 0
+        overall_reward_first = 0
+        overall_reward_second = 0
+        # games where player starts
+        for episode_idx in range(0, n_games):
+            game = games[episode_idx].copy()
+            state = ToepState(game)
+
+            game_finished = False
+            while not game_finished:
+                # select action according to greedy policy
+                valid_actions = game.get_valid_actions()
+                Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
+                value_sorted_actions = sorted(range(0, len(Q)), key=lambda x: -Q[x])
+                valid_value_sorted_actions = [action for action in value_sorted_actions if action_idx_to_name[action] in valid_actions]
+                action = action_idx_to_name[valid_value_sorted_actions[0]]
+
+                [game_next, reward, player_finished, game_finished] = self.play_round(game, action)
+                state_next = ToepState(game_next)
+                if player_finished:
+                    overall_reward_first += reward
+                    break
+
+                game = game_next
+                state = ToepState(game)
+
+            if episode_idx == 0:
+                print(str(game_next))
+
+        # games where player is second
+        for episode_idx in range(0, n_games):
+            game = games[episode_idx].copy()
+
+            valid_actions = game.get_valid_actions()
+            action = valid_actions[np.random.randint(0, len(valid_actions))]
+            [game, _, _, _] = game.move(action)
+            state = ToepState(game)
+
+            game_finished = False
+            while not game_finished:
+                # select action according to greedy policy
+                valid_actions = game.get_valid_actions()
+                Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
+                value_sorted_actions = sorted(range(0, len(Q)), key=lambda x: -Q[x])
+                valid_value_sorted_actions = [action for action in value_sorted_actions if action_idx_to_name[action] in valid_actions]
+                action = action_idx_to_name[valid_value_sorted_actions[0]]
+
+                [game_next, reward, player_finished, game_finished] = self.play_round(game, action)
+                state_next = ToepState(game_next)
+                if player_finished:
+                    overall_reward_second += reward
+                    break
+
+                game = game_next
+                state = ToepState(game)
+
+        return [float(overall_reward_first) / n_games, float(overall_reward_second) / n_games]
 
     def train_episode(self):
         game = ToepGame()
@@ -318,42 +401,27 @@ class ToepQNetworkTrainer:
         ep_buffer = ToepExperienceBuffer()
 
         round_idx = 0
-        while game.winner == None:
+        game_finished = False
+        while not game_finished:
             # select action according to eps-greedy policy
             valid_actions = game.get_valid_actions()
-            invalid = False
             if np.random.rand(1) < self.e or self.n_steps < self.pretrain_steps:
                 action = valid_actions[np.random.randint(0, len(valid_actions))]
             else:
+                # we pick the highest rated action that is also valid
                 Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
-                value_sorted_actions = sorted(range(0, len(Q)), key=lambda x: -Q[x])
-                valid_value_sorted_actions = [action for action in value_sorted_actions if action_idx_to_name[action] in valid_actions]
-                action = action_idx_to_name[valid_value_sorted_actions[0]]
-                #if action not in valid_actions:
-                #    print("Chose action {0}, which is an invalid action (valid actions are {1}). Q: {2}".format(action, valid_actions, Q))
-                #    invalid = True
-                #    invalid_action = action # if the network selects an invalid action, we add this to the ep buffer as a "bad thing"
-                #    action = valid_actions[np.random.randint(0, len(valid_actions))]
+                action = get_highest_valid_action(Q, valid_actions)
 
-            game_next = self.play_round(game, action)
+            [game_next, reward, player_finished, game_finished] = self.play_round(game, action)
+
             next_valid_actions = [action_name_to_idx[action] for action in game_next.get_valid_actions()]
             next_valid_actions_np = np.zeros([7])
             next_valid_actions_np[0:len(next_valid_actions)] = next_valid_actions
             next_valid_actions_np[len(next_valid_actions):] = -1
             state_next = ToepState(game_next)
-            reward = 0
-            if game_next.winner == game.current_player:
-                reward = 1
-            elif game_next.winner != None:
-                reward = -1
-
-            has_winner = game_next.winner != None
 
             self.n_steps += 1
-            ep_buffer.add(np.reshape(np.array([state.state_vec, action, reward, state_next.state_vec, next_valid_actions_np, has_winner]), [1, 6]))
-
-            if invalid:
-                ep_buffer.add(np.reshape(np.array([state.state_vec, invalid_action, -1, np.zeros([self.main_net.state_size]), np.full([4], -1), True]), [1, 6]))
+            ep_buffer.add(np.reshape(np.array([state.state_vec, action_name_to_idx[action], reward, state_next.state_vec, next_valid_actions_np, player_finished]), [1, 6]))
 
             if self.n_steps > self.pretrain_steps:
                 
@@ -362,19 +430,13 @@ class ToepQNetworkTrainer:
 
                 train_batch = self.experience_buffer.sample(self.batch_size)
 
-                main_val_predict   = self.session.run(self.main_net.Q_predict,   feed_dict={self.main_net.state_input:   np.vstack(train_batch[:, 3])})
-                #print("valid_actions: {0}".format(train_batch[0, 4]))
-                #print("main_val_predict: {0}".format(main_val_predict[0]))
+                main_val_predict  = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input:   np.vstack(train_batch[:, 3])})
                 value_sorted_actions = np.argsort(-main_val_predict)
-                #print("value_sorted_actions: {0}".format(value_sorted_actions[0]))
-                valid_value_sorted_actions = np.full([self.batch_size, 4], False)
+                valid_value_sorted_actions = np.full([self.batch_size, 7], False)
                 for row_idx in range(0, self.batch_size):
                     valid_value_sorted_actions[row_idx, :] = np.isin(value_sorted_actions[row_idx, :], train_batch[row_idx, 4])
 
-                #print("valid_value_sorted_actions: {0}".format(valid_value_sorted_actions[0]))
                 action_predict = value_sorted_actions[range(self.batch_size), np.argmax(valid_value_sorted_actions, axis=1)]
-                #print("action_predict: {0}".format(action_predict[0]))
-                #action = valid_value_sorted_actions[0]
 
                 target_val_predict = self.session.run(self.target_net.Q_predict, feed_dict={self.target_net.state_input: np.vstack(train_batch[:, 3])})
 
@@ -397,8 +459,8 @@ class ToepQNetworkTrainer:
             round_idx += 1
 
         self.experience_buffer.add(ep_buffer.buffer)
-        self.r_list[game.winner].append(1)
-        self.r_list[game.winner ^ 1].append(-1)
+        self.r_list[game.get_winner()].append(1)
+        self.r_list[game.get_winner() ^ 1].append(-1)
 
         return game
 
@@ -408,7 +470,8 @@ class ToepQNetworkTrainer:
                 game = trainer.train_episode()
 
                 if episode_idx % 100 == 0:
-                    test_result = self.test_against_random()
+                    #test_result = self.test_against_random()
+                    test_result = self.test_against_self()
                     print("Episode {0}  MR1 {1}  MR2 {2}  E {3}".format(episode_idx, test_result[0], test_result[1], self.e))
                 if episode_idx > 0 and episode_idx % 1000 == 0:
                     self.saver.save(self.session, os.path.join(self.save_path, "model_{0:02d}.ckpt".format(episode_idx)))
