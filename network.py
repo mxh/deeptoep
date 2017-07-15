@@ -59,7 +59,8 @@ class ToepState:
     # opponent table, card 4, val, one-hot (x8)
     # opponent table, card 4, suit, one-hot (x4)
     # stake (x1)
-    # total 145
+    # betting_phase (x1)
+    # total 146
     def __init__(self, game):
         current_player_hand = game.players[game.current_player].hand
         table = [game.players[player_idx % len(game.players)].table for player_idx in range(game.current_player, game.current_player + len(game.players))]
@@ -74,11 +75,11 @@ class ToepQNetwork:
     # Q(s,a) for each action. note that not all actions are always valid -
     # this is not explicitly modelled right now.
     def __init__(self):
-        self.state_size = 145
+        self.state_size = 146
         self.training = True
         with tf.variable_scope('Input'):
             self.state_input = tf.placeholder(shape=[None, self.state_size], dtype=tf.float32)
-            self.res_input = tf.reshape(self.state_input, shape=[-1, 1, 145])
+            self.res_input = tf.reshape(self.state_input, shape=[-1, 1, self.state_size])
         with tf.variable_scope('FeatureExtraction'):
             self.hidden_1   = slim.fully_connected(self.res_input, 256, activation_fn=None, scope='FeatureExtraction/Hidden1')
             self.bn_1       = slim.batch_norm(self.hidden_1, center=True, scale=True, is_training=self.training, scope='FeatureExtraction/BN1')
@@ -237,10 +238,12 @@ class ToepQNetworkTrainer:
             next_game.current_player = orig_player
             return next_game
         next_state = ToepState(next_game)
+
+        game_finished = False
         while next_game.current_player != orig_player and next_game.winner == None:
             valid_actions = next_game.get_valid_actions()
             action = valid_actions[np.random.randint(0, len(valid_actions))]
-            next_game = next_game.move(action)
+            [next_game, reward, game_finished] = next_game.move(action)
             next_state = ToepState(next_game)
 
         return next_game
@@ -350,7 +353,7 @@ class ToepQNetworkTrainer:
             ep_buffer.add(np.reshape(np.array([state.state_vec, action, reward, state_next.state_vec, next_valid_actions_np, has_winner]), [1, 6]))
 
             if invalid:
-                ep_buffer.add(np.reshape(np.array([state.state_vec, invalid_action, -1, np.zeros([145]), np.full([4], -1), True]), [1, 6]))
+                ep_buffer.add(np.reshape(np.array([state.state_vec, invalid_action, -1, np.zeros([self.main_net.state_size]), np.full([4], -1), True]), [1, 6]))
 
             if self.n_steps > self.pretrain_steps:
                 
