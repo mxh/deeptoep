@@ -135,7 +135,7 @@ class ToepExperienceBuffer:
         self.buffer.extend(experience)
 
     def sample(self, size):
-        return np.reshape(np.array(random.sample(self.buffer, size)), [size, 6])
+        return np.reshape(np.array(random.sample(self.buffer, size)), [size, 5])
 
 def update_target_network_op(variables, tau):
     n_variables = len(variables)
@@ -409,19 +409,22 @@ class ToepQNetworkTrainer:
                 action = valid_actions[np.random.randint(0, len(valid_actions))]
             else:
                 # we pick the highest rated action that is also valid
-                Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
-                action = get_highest_valid_action(Q, valid_actions)
+                [action, Q] = self.session.run([self.main_net.a_predict, self.main_net.Q_predict], feed_dict={self.main_net.state_input: [state.state_vec]})
+                print("game: {0}".format(str(game)))
+                print("Q: {0}".format(Q))
+                action = action_idx_to_name[action[0]]
+                #action = get_highest_valid_action(Q, valid_actions)
 
             [game_next, reward, player_finished, game_finished] = self.play_round(game, action)
 
-            next_valid_actions = [action_name_to_idx[action] for action in game_next.get_valid_actions()]
-            next_valid_actions_np = np.zeros([7])
-            next_valid_actions_np[0:len(next_valid_actions)] = next_valid_actions
-            next_valid_actions_np[len(next_valid_actions):] = -1
+            #next_valid_actions = [action_name_to_idx[action] for action in game_next.get_valid_actions()]
+            #next_valid_actions_np = np.zeros([7])
+            #next_valid_actions_np[0:len(next_valid_actions)] = next_valid_actions
+            #next_valid_actions_np[len(next_valid_actions):] = -1
             state_next = ToepState(game_next)
 
             self.n_steps += 1
-            ep_buffer.add(np.reshape(np.array([state.state_vec, action_name_to_idx[action], reward, state_next.state_vec, next_valid_actions_np, player_finished]), [1, 6]))
+            ep_buffer.add(np.reshape(np.array([state.state_vec, action_name_to_idx[action], reward, state_next.state_vec, player_finished]), [1, 5]))
 
             if self.n_steps > self.pretrain_steps:
                 
@@ -430,17 +433,18 @@ class ToepQNetworkTrainer:
 
                 train_batch = self.experience_buffer.sample(self.batch_size)
 
-                main_val_predict  = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input:   np.vstack(train_batch[:, 3])})
-                value_sorted_actions = np.argsort(-main_val_predict)
-                valid_value_sorted_actions = np.full([self.batch_size, 7], False)
-                for row_idx in range(0, self.batch_size):
-                    valid_value_sorted_actions[row_idx, :] = np.isin(value_sorted_actions[row_idx, :], train_batch[row_idx, 4])
+                action_predict = self.session.run(self.main_net.a_predict, feed_dict={self.main_net.state_input:   np.vstack(train_batch[:, 3])})
+                #main_val_predict  = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input:   np.vstack(train_batch[:, 3])})
+                #value_sorted_actions = np.argsort(-main_val_predict)
+                #valid_value_sorted_actions = np.full([self.batch_size, 7], False)
+                #for row_idx in range(0, self.batch_size):
+                #    valid_value_sorted_actions[row_idx, :] = np.isin(value_sorted_actions[row_idx, :], train_batch[row_idx, 4])
 
-                action_predict = value_sorted_actions[range(self.batch_size), np.argmax(valid_value_sorted_actions, axis=1)]
+                #action_predict = value_sorted_actions[range(self.batch_size), np.argmax(valid_value_sorted_actions, axis=1)]
 
                 target_val_predict = self.session.run(self.target_net.Q_predict, feed_dict={self.target_net.state_input: np.vstack(train_batch[:, 3])})
 
-                end_multiplier = -(train_batch[:, 5] - 1)
+                end_multiplier = -(train_batch[:, 4] - 1)
 
                 # was: double_Q = value_predict[range(self.batch_size), action_predict]
                 double_Q = target_val_predict[range(self.batch_size), action_predict]

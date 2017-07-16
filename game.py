@@ -114,6 +114,10 @@ class ToepGamePhase:
         return [game, reward, player_finished, game_finished]
 
     def self_move(self, action):
+        if not action in self.get_valid_actions():
+            print("Invalid action picked")
+            return [-1, False, False]
+
         assert(action in self.get_valid_actions())
         if action == 't':
             # switch to betting
@@ -192,7 +196,9 @@ class ToepBettingPhase:
         return [game, reward, player_finished, game_finished]
 
     def self_move(self, action):
-        assert(action in self.get_valid_actions())
+        if not action in self.get_valid_actions():
+            print("Invalid action picked")
+            return [-1, False, False]
 
         reward = 0
         game_finished = False
