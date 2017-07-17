@@ -115,8 +115,7 @@ class ToepGamePhase:
 
     def self_move(self, action):
         if not action in self.get_valid_actions():
-            print("Invalid action picked")
-            return [-1, False, False]
+            return [-10, False, False]
 
         assert(action in self.get_valid_actions())
         if action == 't':
@@ -197,8 +196,7 @@ class ToepBettingPhase:
 
     def self_move(self, action):
         if not action in self.get_valid_actions():
-            print("Invalid action picked")
-            return [-1, False, False]
+            return [-10, False, False]
 
         reward = 0
         game_finished = False
@@ -284,9 +282,9 @@ class RandomPolicy:
 def generate_episode(game, policy):
     states = [game]
 
-    finished = False
-    while not finished:
-        [new_game, reward, finished] = game.move(policy.get_action(game))
+    game_finished = False
+    while not game_finished:
+        [new_game, reward, player_finished, game_finished] = game.move(policy.get_action(game))
         states.append(new_game)
         game = new_game
 

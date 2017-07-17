@@ -66,10 +66,28 @@ def toep_state_test():
 
     return [1, test]
 
+def state_vec_to_game_test():
+    policy = RandomPolicy()
+    game = ToepGame(2)
+    episode = generate_episode(game, policy)
+
+    game = episode[-1]
+    game_str = str(game)
+    print("Original game:")
+    print(game_str)
+    state = ToepState(game)
+    reconstructed_game = state_vec_to_game(state.state_vec)
+    reconstructed_game_str = str(reconstructed_game)
+    print("Reconstructed game:")
+    print(reconstructed_game_str)
+
+    return [1, reconstructed_game_str == game_str]
+
 tests = {"Deck test": deck_test,\
          "ToepGame test": toep_game_test,\
          "card_to_one_hot test": card_to_one_hot_test,\
-         "ToepState test": toep_state_test}
+         "ToepState test": toep_state_test,\
+         "state_vec to ToepGame test": state_vec_to_game_test}
 
 if __name__=="__main__":
     all_n_tests = 0

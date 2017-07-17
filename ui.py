@@ -29,12 +29,12 @@ class ToepUIMain:
             # hand
             for card_idx in range(0, len(self.game.players[player_idx].hand)):
                 self.card_sprites[player_idx]['hand'][card_idx] = {'front': CardSprite(self.game.players[player_idx].hand[card_idx]), 'back': CardBackSprite()}
-                self.card_sprites_group.add(self.card_sprites[player_idx]['hand'][card_idx]['front'], self.card_sprites[player_idx]['hand'][card_idx]['back']
+                self.card_sprites_group.add(self.card_sprites[player_idx]['hand'][card_idx]['front'], self.card_sprites[player_idx]['hand'][card_idx]['back'])
 
             # table
             for card_idx in range(0, len(self.game.players[player_idx].table)):
                 self.card_sprites[player_idx]['table'][card_idx] = {'front': CardSprite(self.game.players[player_idx].table[card_idx]), 'back': CardBackSprite()}
-                self.card_sprites_group.add(self.card_sprites[player_idx]['table'][card_idx]['front'], self.card_sprites[player_idx]['table'][card_idx]['back']
+                self.card_sprites_group.add(self.card_sprites[player_idx]['table'][card_idx]['front'], self.card_sprites[player_idx]['table'][card_idx]['back'])
 
     def main_loop(self):
         self.load_sprites()
@@ -52,7 +52,7 @@ class ToepUIMain:
             pygame.display.flip()
 
     def draw_hand(self, player_idx):
-
+        pass
 
     def load_sprites(self):
         self.back = CardBackSprite()
@@ -69,9 +69,12 @@ class CardBackSprite(pygame.sprite.Sprite):
         self.image, self.rect = load_image('./img/png/back.png', -1)
 
 class CardSprite(pygame.sprite.Sprite):
-    def __init__(self, card):
+    def __init__(self, card, position):
         pygame.sprite.Sprite.__init__(self)
         self.image, self.rect = load_image('./img/png/{0}o{1}.png'.format(card[0], card[1]), -1)
+
+        self.position = position
+        self.rect.center = self.position
 
 if __name__=="__main__":
     toep_game = ToepGame()
