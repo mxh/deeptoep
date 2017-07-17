@@ -266,8 +266,9 @@ class ToepQNetworkTrainer:
     def play_round(self, game, action):
         orig_player = game.phase.current_player
         [next_game, reward, player_finished, game_finished] = game.move(action)
+        next_player_game = next_game.copy()
         if player_finished:
-            return [next_game, reward, player_finished, game_finished]
+            return [next_game, next_player_game, reward, player_finished, game_finished]
 
         next_state = ToepState(next_game)
         while next_game.phase.current_player != orig_player and not game_finished:
@@ -285,10 +286,12 @@ class ToepQNetworkTrainer:
         if game_finished:
             if next_game.get_winner() == orig_player:
                 reward = next_game.stake
+                if np.all([next_game.players[player_idx].did_fold for player_idx in range(0, len(next_game.players)) if player_idx != orig_player]):
+                    reward -= 1
             else:
                 reward = -next_game.stake
 
-        return [next_game, reward, game_finished, game_finished]
+        return [next_game, next_player_game, reward, game_finished, game_finished]
 
     def play_round_random(self, game, action):
         orig_player = game.phase.current_player
@@ -394,13 +397,13 @@ class ToepQNetworkTrainer:
                 valid_value_sorted_actions = [action for action in value_sorted_actions if action_idx_to_name[action] in valid_actions]
                 action = action_idx_to_name[valid_value_sorted_actions[0]]
 
-                [game_next, reward, player_finished, game_finished] = self.play_round(game, action)
-                state_next = ToepState(game_next)
+                [round_next, game_next, reward, player_finished, game_finished] = self.play_round(game, action)
+                state_next = ToepState(round_next)
                 if player_finished:
                     overall_reward_first += reward
                     break
 
-                game = game_next
+                game = round_next
                 state = ToepState(game)
 
             if episode_idx == 0:
@@ -424,13 +427,13 @@ class ToepQNetworkTrainer:
                 valid_value_sorted_actions = [action for action in value_sorted_actions if action_idx_to_name[action] in valid_actions]
                 action = action_idx_to_name[valid_value_sorted_actions[0]]
 
-                [game_next, reward, player_finished, game_finished] = self.play_round(game, action)
-                state_next = ToepState(game_next)
+                [round_next, game_next, reward, player_finished, game_finished] = self.play_round(game, action)
+                state_next = ToepState(round_next)
                 if player_finished:
                     overall_reward_second += reward
                     break
 
-                game = game_next
+                game = round_next
                 state = ToepState(game)
 
         return [float(overall_reward_first) / n_games, float(overall_reward_second) / n_games]
@@ -446,7 +449,7 @@ class ToepQNetworkTrainer:
 
         round_idx = 0
         game_finished = False
-        while not game_finished:
+        while game.get_winner() == None:
             # select action according to eps-greedy policy
             valid_actions = game.get_valid_actions()
             if np.random.rand(1) < self.e or self.n_steps < self.pretrain_steps:
@@ -466,23 +469,17 @@ class ToepQNetworkTrainer:
                 action = action_idx_to_name[action[0]]
                 #action = get_highest_valid_action(Q, valid_actions)
 
-            [game_next, reward, player_finished, game_finished] = self.play_round(game, action)
+            [round_next, game_next, reward, player_finished, game_finished] = self.play_round(game, action)
             if verbose:
                 print("chosen action: {0}".format(action))
                 print("reward: {0}".format(reward))
                 print("next game: {0}".format(str(game_next)))
 
-            if (reward != 0):
-                print("REWARD: {0}".format(reward))
-                print("T: {0}".format(str(game)))
-                print("A: {0}".format(action))
-                print("T+1: {0}".format(str(game_next)))
-
             #next_valid_actions = [action_name_to_idx[action] for action in game_next.get_valid_actions()]
             #next_valid_actions_np = np.zeros([7])
             #next_valid_actions_np[0:len(next_valid_actions)] = next_valid_actions
             #next_valid_actions_np[len(next_valid_actions):] = -1
-            state_next = ToepState(game_next)
+            state_next = ToepState(round_next)
 
             self.n_steps += 1
             ep_buffer.add(np.reshape(np.array([state.state_vec, action_name_to_idx[action], reward, state_next.state_vec, player_finished]), [1, 5]))
@@ -520,8 +517,7 @@ class ToepQNetworkTrainer:
                     self.session.run(op)
 
             game = game_next
-            state = state_next
-            round_idx += 1
+            state = ToepState(game_next)
 
         self.experience_buffer.add(ep_buffer.buffer)
         self.r_list[game.get_winner()].append(1)
@@ -532,8 +528,8 @@ class ToepQNetworkTrainer:
     def train(self, n_episodes):
         with tf.device('/gpu:0'):
             for episode_idx in range(0, self.n_episodes):
-                #verbose = episode_idx % 100 == 0
-                verbose = False
+                verbose = episode_idx % 100 == 0
+                #verbose = False
                 game = trainer.train_episode(verbose)
 
                 if episode_idx % 100 == 0:
