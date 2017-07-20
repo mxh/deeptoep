@@ -67,6 +67,9 @@ class PlayerState:
 
         return None
 
+    def str_hidden(self):
+        return "{0: <28}  {1}".format("T: [{0}]".format(cards_to_string(self.table)), "F" if self.did_fold else "")
+
     def __str__(self):
         return "{0: <28}  {1} {2}".format("H: [{0}]".format(cards_to_string(self.hand)), "T: [{0}]".format(cards_to_string(self.table)), "F" if self.did_fold else "")
 
@@ -263,6 +266,13 @@ class ToepGame:
 
     def move(self, action):
         return self.phase.move(action)
+
+    def str_hidden(self):
+        player_str = "\n\n".join(["P{0} | {1}".format(idx, self.players[idx] if idx == self.phase.current_player else self.players[idx].str_hidden()) for idx in range(0, len(self.players))])
+        phase_str = str(self.phase)
+        last_to_raise_str = "T: {0}".format(self.betting_phase.last_player_to_raise)
+        stake_str = "S: {0}".format(self.stake)
+        return "\n\n".join([player_str, phase_str, stake_str])
 
     def __str__(self):
         player_str = "\n\n".join(["P{0} | {1}".format(idx, self.players[idx]) for idx in range(0, len(self.players))])

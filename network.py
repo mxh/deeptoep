@@ -60,15 +60,26 @@ class ToepState:
     # opponent table, card 4, suit, one-hot (x4)
     # stake (x1)
     # betting_phase (x1)
-    # total 146
+    # is action 1 valid, (x1)
+    # is action 2 valid, (x1)
+    # is action 3 valid, (x1)
+    # is action 4 valid, (x1)
+    # is action 5 valid, (x1)
+    # is action 6 valid, (x1)
+    # is action 7 valid, (x1)
+    # total 153
     def __init__(self, game):
         current_player_hand = game.players[game.phase.current_player].hand
         table = [game.players[player_idx % len(game.players)].table for player_idx in range(game.phase.current_player, game.phase.current_player + len(game.players))]
 
         current_player_hand_vec = cards_to_one_hot(current_player_hand, 4)
         table_vecs = [cards_to_one_hot(player_table, 4) for player_table in table]
+
+        valid_actions = game.get_valid_actions()
+        all_actions = [0, 1, 2, 3, 't', 'c', 'f']
+        action_vec = np.array([1 if action in valid_actions else 0 for action in all_actions])
         
-        self.state_vec = np.concatenate([current_player_hand_vec] + table_vecs + [np.array([game.stake, 1 if game.phase == game.betting_phase else 0])])
+        self.state_vec = np.concatenate([current_player_hand_vec] + table_vecs + [np.array([game.stake, 1 if game.phase == game.betting_phase else 0])] + [action_vec])
 
 def state_vec_to_game(state_vec, n_players=2):
     game = ToepGame(n_players)
@@ -113,7 +124,7 @@ class ToepQNetwork:
     # Q(s,a) for each action. note that not all actions are always valid -
     # this is not explicitly modelled right now.
     def __init__(self):
-        self.state_size = 146
+        self.state_size = 153
         self.training = True
         with tf.variable_scope('Input'):
             self.state_input = tf.placeholder(shape=[None, self.state_size], dtype=tf.float32)
@@ -215,7 +226,7 @@ class ToepQNetworkTrainer:
         self.gamma = 0.9
         self.save_path = '/jobhunt/practice/toepen/nets'
         self.log_path = '/jobhunt/practice/toepen/logs'
-        self.load_model = False
+        self.load_model = True
 
         self.reset()
 
