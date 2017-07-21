@@ -1,3 +1,28 @@
+html, body, svg
+{
+    height: 100%;
+    margin: 0;
+    width: 100%;
+}
+
+#network_container
+{
+    height: calc(100% - 2em);
+    width: 100%;
+}
+
+#state_input_container
+{
+    height: 1.9em;
+    width: 100%;
+}
+
+#state_input_container input
+{
+    height: 1.9em; 
+    width: calc(100% - 1em);
+}
+
 .node {
   cursor: pointer;
 }
@@ -6,10 +31,15 @@
     background-color:#EEE;
 }
  
-circle.node {
+circle.node_circle {
   fill: #fff;
   stroke: steelblue;
   stroke-width: 1.5px;
+}
+
+line.connection {
+    stroke: #aaa;
+    stroke-width: 1px;
 }
  
 .node text {
