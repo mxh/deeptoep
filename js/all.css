@@ -41,6 +41,14 @@ line.connection {
     stroke: #aaa;
     stroke-width: 1px;
 }
+
+line.connection.unselected {
+    visibility: hidden !important;
+}
+
+line.connection.selected {
+    visibility: visible !important;
+}
  
 .node text {
   font-size:10px; 
