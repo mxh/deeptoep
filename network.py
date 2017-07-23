@@ -166,7 +166,8 @@ class ToepQNetwork:
 
         with tf.variable_scope('Trainer'):
             self.global_step = tf.Variable(0, trainable=False)
-            self.learning_rate = tf.train.polynomial_decay(1e-5, self.global_step, 100000, 1e-6, power=0.5)
+            self.learning_rate = tf.train.polynomial_decay(1e-5, self.global_step, 500000, 1e-7, power=0.5)
+            self.boltzmann_temp = tf.train.polynomial_decay(self.start_boltzmann_temp, self.global_step, self.boltzmann_steps, self.end_boltzmann_temp, power=0.5)
 
             update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
             with tf.control_dependencies(update_ops):
@@ -223,11 +224,14 @@ class ToepQNetworkTrainer:
         self.tau = 0.01
         self.start_e = 1
         self.end_e = 0.1
-        self.e_steps = 100000
+        self.e_steps = 500000
         self.pretrain_steps = 10000
         self.n_episodes = 10000000
         self.batch_size = 128
         self.gamma = 0.9
+        self.start_boltzmann_temp = 5
+        self.end_boltzmann_temp = 0.5
+        self.boltzmann_steps = 500000
         self.save_path = '/home/moos/jobhunt/practice/toepen/nets'
         self.log_path = '/home/moos/jobhunt/practice/toepen/logs'
         self.load_model = False
@@ -439,11 +443,11 @@ class ToepQNetworkTrainer:
         if valid_only:
             valid_action_indices = [action_name_to_idx[action] for action in valid_actions]
             Q_valid = np.array([Q[idx] for idx in valid_action_indices])
-            Q_valid_softmax = softmax(Q_valid, 5)
+            Q_valid_softmax = softmax(Q_valid, self.boltzmann_temp)
             action = valid_action_indices[np.random.choice(np.arange(0, len(Q_valid_softmax)), p=Q_valid_softmax)]
             action = action_idx_to_name[action]
         else:
-            Q_softmax = softmax(Q, 5)
+            Q_softmax = softmax(Q, self.boltzmann_temp)
             action = np.random.choice(np.arange(0, len(Q_softmax)), p=Q_softmax)
             action = action_idx_to_name[action]
 
