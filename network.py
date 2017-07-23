@@ -462,7 +462,11 @@ class ToepQNetworkTrainer:
         game_finished = False
         while game.get_winner() == None:
             # select action according to eps-greedy policy
-            [action, Q] = self.get_action(game, state, False)
+            if self.n_steps < self.pretrain_steps:
+                action = random.choice([0, 1, 2, 3, 't', 'c', 'f'])
+                Q = "NA"
+            else:
+                [action, Q] = self.get_action(game, state, False)
 
             if verbose:
                 print("----------------------------------------------")
