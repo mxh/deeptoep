@@ -214,6 +214,10 @@ def get_highest_valid_action(Q, valid_actions):
 
     return action
 
+def softmax(x, t):
+    e_x = np.exp(x / t)
+    return e_x / np.sum(e_x)
+
 class ToepQNetworkTrainer:
     def __init__(self):
         self.tau = 0.01
@@ -224,9 +228,9 @@ class ToepQNetworkTrainer:
         self.n_episodes = 10000000
         self.batch_size = 128
         self.gamma = 0.9
-        self.save_path = '/jobhunt/practice/toepen/nets'
-        self.log_path = '/jobhunt/practice/toepen/logs'
-        self.load_model = True
+        self.save_path = '/home/moos/jobhunt/practice/toepen/nets'
+        self.log_path = '/home/moos/jobhunt/practice/toepen/logs'
+        self.load_model = False
 
         self.reset()
 
@@ -283,14 +287,8 @@ class ToepQNetworkTrainer:
 
         next_state = ToepState(next_game)
         while next_game.phase.current_player != orig_player and not game_finished:
-            valid_actions = next_game.get_valid_actions()
-            if np.random.rand(1) < self.e or self.n_steps < self.pretrain_steps:
-                action = random.choice(valid_actions)
-            else:
-                Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [next_state.state_vec]})[0]
-                value_sorted_actions = sorted(range(0, len(Q)), key=lambda x: -Q[x])
-                valid_value_sorted_actions = [action for action in value_sorted_actions if action_idx_to_name[action] in valid_actions]
-                action = action_idx_to_name[valid_value_sorted_actions[0]]
+            [action, _] = self.get_action(next_game, next_state, True)
+
             [next_game, _, _, game_finished] = next_game.move(action)
             next_state = ToepState(next_game)
 
@@ -340,11 +338,7 @@ class ToepQNetworkTrainer:
             game_finished = False
             while not game_finished:
                 # select action according to greedy policy
-                valid_actions = game.get_valid_actions()
-                Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
-                value_sorted_actions = sorted(range(0, len(Q)), key=lambda x: -Q[x])
-                valid_value_sorted_actions = [action for action in value_sorted_actions if action_idx_to_name[action] in valid_actions]
-                action = action_idx_to_name[valid_value_sorted_actions[0]]
+                [action, _] = self.get_action(game, state, True)
 
                 [game_next, reward, player_finished, game_finished] = self.play_round_random(game, action)
                 state_next = ToepState(game_next)
@@ -370,11 +364,7 @@ class ToepQNetworkTrainer:
             game_finished = False
             while not game_finished:
                 # select action according to greedy policy
-                valid_actions = game.get_valid_actions()
-                Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
-                value_sorted_actions = sorted(range(0, len(Q)), key=lambda x: -Q[x])
-                valid_value_sorted_actions = [action for action in value_sorted_actions if action_idx_to_name[action] in valid_actions]
-                action = action_idx_to_name[valid_value_sorted_actions[0]]
+                [action, _] = self.get_action(game, state, True)
 
                 [game_next, reward, player_finished, game_finished] = self.play_round_random(game, action)
                 state_next = ToepState(game_next)
@@ -402,11 +392,7 @@ class ToepQNetworkTrainer:
             game_finished = False
             while not game_finished:
                 # select action according to greedy policy
-                valid_actions = game.get_valid_actions()
-                Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
-                value_sorted_actions = sorted(range(0, len(Q)), key=lambda x: -Q[x])
-                valid_value_sorted_actions = [action for action in value_sorted_actions if action_idx_to_name[action] in valid_actions]
-                action = action_idx_to_name[valid_value_sorted_actions[0]]
+                [action, _] = self.get_action(game, state, True)
 
                 [round_next, game_next, reward, player_finished, game_finished] = self.play_round(game, action)
                 state_next = ToepState(round_next)
@@ -432,11 +418,7 @@ class ToepQNetworkTrainer:
             game_finished = False
             while not game_finished:
                 # select action according to greedy policy
-                valid_actions = game.get_valid_actions()
-                Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
-                value_sorted_actions = sorted(range(0, len(Q)), key=lambda x: -Q[x])
-                valid_value_sorted_actions = [action for action in value_sorted_actions if action_idx_to_name[action] in valid_actions]
-                action = action_idx_to_name[valid_value_sorted_actions[0]]
+                [action, _] = self.get_action(game, state, True)
 
                 [round_next, game_next, reward, player_finished, game_finished] = self.play_round(game, action)
                 state_next = ToepState(round_next)
@@ -448,6 +430,24 @@ class ToepQNetworkTrainer:
                 state = ToepState(game)
 
         return [float(overall_reward_first) / n_games, float(overall_reward_second) / n_games]
+
+    def get_action(self, game, state, valid_only=False):
+        valid_actions = game.get_valid_actions()
+
+        Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
+
+        if valid_only:
+            valid_action_indices = [action_name_to_idx[action] for action in valid_actions]
+            Q_valid = np.array([Q[idx] for idx in valid_action_indices])
+            Q_valid_softmax = softmax(Q_valid, 5)
+            action = valid_action_indices[np.random.choice(np.arange(0, len(Q_valid_softmax)), p=Q_valid_softmax)]
+            action = action_idx_to_name[action]
+        else:
+            Q_softmax = softmax(Q, 5)
+            action = np.random.choice(np.arange(0, len(Q_softmax)), p=Q_softmax)
+            action = action_idx_to_name[action]
+
+        return [action, Q]
 
     def train_episode(self, verbose=False):
         if verbose:
@@ -462,23 +462,13 @@ class ToepQNetworkTrainer:
         game_finished = False
         while game.get_winner() == None:
             # select action according to eps-greedy policy
-            valid_actions = game.get_valid_actions()
-            if np.random.rand(1) < self.e or self.n_steps < self.pretrain_steps:
-                #action = valid_actions[np.random.randint(0, len(valid_actions))]
-                action = random.choice([0, 1, 2, 3, 't', 'c', 'f'])
-                if verbose:
-                    print("----------------------------------------------")
-                    print("random action!")
-                    print("game: {0}".format(str(game)))
-            else:
-                # we pick the highest rated action that is also valid
-                [action, Q] = self.session.run([self.main_net.a_predict, self.main_net.Q_predict], feed_dict={self.main_net.state_input: [state.state_vec]})
-                if verbose:
-                    print("----------------------------------------------")
-                    print("game: {0}".format(str(game)))
-                    print("Q: {0}".format(Q))
-                action = action_idx_to_name[action[0]]
-                #action = get_highest_valid_action(Q, valid_actions)
+            [action, Q] = self.get_action(game, state, False)
+
+            if verbose:
+                print("----------------------------------------------")
+                print("game: {0}".format(str(game)))
+                print("Q: {0}".format(Q))
+                print("action: {0}".format(action))
 
             [round_next, game_next, reward, player_finished, game_finished] = self.play_round(game, action)
             if verbose:
@@ -486,10 +476,6 @@ class ToepQNetworkTrainer:
                 print("reward: {0}".format(reward))
                 print("next game: {0}".format(str(game_next)))
 
-            #next_valid_actions = [action_name_to_idx[action] for action in game_next.get_valid_actions()]
-            #next_valid_actions_np = np.zeros([7])
-            #next_valid_actions_np[0:len(next_valid_actions)] = next_valid_actions
-            #next_valid_actions_np[len(next_valid_actions):] = -1
             state_next = ToepState(round_next)
 
             self.n_steps += 1
