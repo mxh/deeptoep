@@ -167,7 +167,6 @@ class ToepQNetwork:
         with tf.variable_scope('Trainer'):
             self.global_step = tf.Variable(0, trainable=False)
             self.learning_rate = tf.train.polynomial_decay(1e-5, self.global_step, 500000, 1e-7, power=0.5)
-            self.boltzmann_temp = tf.train.polynomial_decay(self.start_boltzmann_temp, self.global_step, self.boltzmann_steps, self.end_boltzmann_temp, power=0.5)
 
             update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
             with tf.control_dependencies(update_ops):
@@ -232,9 +231,11 @@ class ToepQNetworkTrainer:
         self.start_boltzmann_temp = 5
         self.end_boltzmann_temp = 0.5
         self.boltzmann_steps = 500000
-        self.save_path = '/home/moos/jobhunt/practice/toepen/nets'
-        self.log_path = '/home/moos/jobhunt/practice/toepen/logs'
+        self.save_path = '/jobhunt/practice/toepen/nets'
+        self.log_path = '/jobhunt/practice/toepen/logs'
         self.load_model = False
+
+
 
         self.reset()
 
@@ -258,6 +259,9 @@ class ToepQNetworkTrainer:
         # we will decrease the amount of random actions taken gradually
         self.e = self.start_e
         self.step_drop = (self.start_e - self.end_e) / self.e_steps
+
+        self.boltzmann_temp = self.start_boltzmann_temp
+        self.boltzmann_step = (self.start_boltzmann_temp - self.end_boltzmann_temp) / self.boltzmann_steps
 
         self.n_steps = 0
         self.r_list = [[], []]
@@ -493,6 +497,9 @@ class ToepQNetworkTrainer:
                 
                 if self.e > self.end_e:
                     self.e -= self.step_drop
+
+                if self.boltzmann_temp > self.end_boltzmann_temp:
+                    self.boltzmann_temp -= self.boltzmann_step
 
                 train_batch = self.experience_buffer.sample(self.batch_size)
 
