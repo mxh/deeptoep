@@ -141,7 +141,7 @@ class ToepGamePhase:
                 self.round_number += 1
                 if self.game_finished():
                     if self.card_to_beat[1] == self.current_player:
-                        return [self.game.stake, True, True]
+                        return [0, True, True]
                     else:
                         return [-self.game.stake, True, True]
                 else:

@@ -26,11 +26,8 @@ class NetworkToepHandler:
     def get_move(self, game):
         state = ToepState(game)
 
-        print("".join([str(int(x)) for x in state.state_vec]))
         [action, Q, advantage] = self.session.run([self.network.a_predict, self.network.Q_predict, self.network.advantage], feed_dict={self.network.state_input: [state.state_vec]})
         action = action_idx_to_name[action[0]]
-        print(Q)
-        print(advantage)
 
         return action
 

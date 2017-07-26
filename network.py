@@ -130,16 +130,19 @@ class ToepQNetwork:
             self.state_input = tf.placeholder(shape=[None, self.state_size], dtype=tf.float32)
             self.res_input = tf.reshape(self.state_input, shape=[-1, 1, self.state_size])
         with tf.variable_scope('FeatureExtraction'):
-            self.hidden_1   = slim.fully_connected(self.res_input, 256, activation_fn=None, scope='FeatureExtraction/Hidden1')
+            self.hidden_1   = slim.fully_connected(self.res_input, 512, activation_fn=None, scope='FeatureExtraction/Hidden1')
             #self.bn_1       = slim.batch_norm(self.hidden_1, center=True, scale=True, is_training=self.training, scope='FeatureExtraction/BN1')
             self.relu_1     = tf.nn.relu(self.hidden_1, 'relu')
             self.hidden_2   = slim.fully_connected(self.relu_1,    256, activation_fn=None, scope='FeatureExtraction/Hidden2')
             #self.bn_2       = slim.batch_norm(self.hidden_2, center=True, scale=True, is_training=self.training, scope='FeatureExtraction/BN2')
             self.relu_2     = tf.nn.relu(self.hidden_2, 'relu')
+            self.hidden_3   = slim.fully_connected(self.relu_2,    128, activation_fn=None, scope='FeatureExtraction/Hidden3')
+            #self.bn_2       = slim.batch_norm(self.hidden_2, center=True, scale=True, is_training=self.training, scope='FeatureExtraction/BN2')
+            self.relu_3     = tf.nn.relu(self.hidden_3, 'relu')
 
         # split output into two streams; one for advantage and one for value
         with tf.variable_scope('AVSeparation'):
-            self.advantage_hidden_nested, self.value_hidden_nested = tf.split(self.relu_2, 2, 2)
+            self.advantage_hidden_nested, self.value_hidden_nested = tf.split(self.relu_3, 2, 2)
 
         with tf.variable_scope('Advantage'):
             self.advantage_hidden = slim.flatten(self.advantage_hidden_nested)
@@ -228,14 +231,12 @@ class ToepQNetworkTrainer:
         self.n_episodes = 10000000
         self.batch_size = 128
         self.gamma = 0.9
-        self.start_boltzmann_temp = 5
-        self.end_boltzmann_temp = 0.5
-        self.boltzmann_steps = 500000
+        self.start_boltzmann_temp = 1
+        self.end_boltzmann_temp = 0.1
+        self.boltzmann_steps = 100000
         self.save_path = '/jobhunt/practice/toepen/nets'
         self.log_path = '/jobhunt/practice/toepen/logs'
         self.load_model = False
-
-
 
         self.reset()
 
@@ -302,9 +303,9 @@ class ToepQNetworkTrainer:
 
         if game_finished:
             if next_game.get_winner() == orig_player:
-                reward = next_game.stake
-                if np.all([next_game.players[player_idx].did_fold for player_idx in range(0, len(next_game.players)) if player_idx != orig_player]):
-                    reward -= 1
+                reward = 0#next_game.stake
+                #if np.all([next_game.players[player_idx].did_fold for player_idx in range(0, len(next_game.players)) if player_idx != orig_player]):
+                #    reward -= 1
             else:
                 reward = -next_game.stake
 
@@ -325,7 +326,7 @@ class ToepQNetworkTrainer:
 
         if game_finished:
             if next_game.get_winner() == orig_player:
-                reward = next_game.stake
+                reward = 0#next_game.stake
             else:
                 reward = -next_game.stake
 
@@ -468,6 +469,9 @@ class ToepQNetworkTrainer:
 
         round_idx = 0
         game_finished = False
+
+        ep_loss = 0
+        ep_steps = 0
         while game.get_winner() == None:
             # select action according to eps-greedy policy
             if self.n_steps < self.pretrain_steps:
@@ -491,6 +495,7 @@ class ToepQNetworkTrainer:
             state_next = ToepState(round_next)
 
             self.n_steps += 1
+            ep_steps += 1
             ep_buffer.add(np.reshape(np.array([state.state_vec, action_name_to_idx[action], reward, state_next.state_vec, player_finished]), [1, 5]))
 
             if self.n_steps > self.pretrain_steps:
@@ -520,10 +525,12 @@ class ToepQNetworkTrainer:
                 double_Q = target_val_predict[range(self.batch_size), action_predict]
                 target_Q = train_batch[:, 2] + (self.gamma * double_Q * end_multiplier)
 
-                _ = self.session.run(self.main_net.update_model, \
-                        feed_dict={self.main_net.state_input: np.vstack(train_batch[:, 0]),\
-                                   self.main_net.target_Q: target_Q,\
-                                   self.main_net.actions: train_batch[:, 1]})
+                [_, loss] = self.session.run([self.main_net.update_model, self.main_net.loss], \
+                                   feed_dict={self.main_net.state_input: np.vstack(train_batch[:, 0]),\
+                                              self.main_net.target_Q: target_Q,\
+                                              self.main_net.actions: train_batch[:, 1]})
+
+                ep_loss += loss
 
                 for op in self.target_update_ops:
                     self.session.run(op)
@@ -535,19 +542,19 @@ class ToepQNetworkTrainer:
         self.r_list[game.get_winner()].append(1)
         self.r_list[game.get_winner() ^ 1].append(-1)
 
-        return game
+        return [game, ep_loss / ep_steps]
 
     def train(self, n_episodes):
         with tf.device('/gpu:0'):
             for episode_idx in range(0, self.n_episodes):
                 verbose = episode_idx % 100 == 0
                 #verbose = False
-                game = trainer.train_episode(verbose)
+                [game, ep_loss] = trainer.train_episode(verbose)
 
                 if episode_idx % 100 == 0:
                     #test_result = self.test_against_random()
                     test_result = self.test_against_self()
-                    print("Episode {0}  MR1 {1}  MR2 {2}  E {3}".format(episode_idx, test_result[0], test_result[1], self.e))
+                    print("Episode {0}  MR1 {1}  MR2 {2}  E {3}  L {4}".format(episode_idx, test_result[0], test_result[1], self.e, ep_loss))
                 if episode_idx > 0 and episode_idx % 5000 == 0:
                     self.saver.save(self.session, os.path.join(self.save_path, "model_{0:02d}.ckpt".format(episode_idx)))
                     print("Saved model")
