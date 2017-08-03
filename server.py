@@ -26,6 +26,7 @@ class NetworkToepHandler:
     def get_move(self, game):
         state = ToepState(game)
 
+        print("".join([str(int(x)) for x in state.state_vec]))
         [action, Q, advantage] = self.session.run([self.network.a_predict, self.network.Q_predict, self.network.advantage], feed_dict={self.network.state_input: [state.state_vec]})
         action = action_idx_to_name[action[0]]
 
@@ -52,7 +53,7 @@ class ToepGameServer:
             return
 
         while self.game.get_winner() == None:
-            [next_game, reward, player_finished, game_finished] = self.game.move(\
+            next_game = self.game.move(\
                 self.handlers[self.game.phase.current_player].get_move(self.game)\
             )
 

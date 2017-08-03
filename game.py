@@ -42,7 +42,11 @@ class Deck:
 
 class PlayerState:
     def __init__(self, hand=[]):
-        self.hand = sort_cards(hand)
+        self.score = 0
+        self.reset_round(hand)
+
+    def reset_round(self, hand):
+        self.hand = hand
         self.table = []
         self.can_toep = True
         self.did_fold = False
@@ -53,6 +57,7 @@ class PlayerState:
         player.table = self.table[:]
         player.can_toep = self.can_toep
         player.did_fold = self.did_fold
+        player.score = self.score
 
         return player
 
@@ -68,18 +73,19 @@ class PlayerState:
         return None
 
     def str_hidden(self):
-        return "{0: <28}  {1}".format("T: [{0}]".format(cards_to_string(self.table)), "F" if self.did_fold else "")
+        return "S: {0: <2} {1: <28}  {2}".format(self.score, "T: [{0}]".format(cards_to_string(self.table)), "F" if self.did_fold else "")
 
     def __str__(self):
-        return "{0: <28}  {1} {2}".format("H: [{0}]".format(cards_to_string(self.hand)), "T: [{0}]".format(cards_to_string(self.table)), "F" if self.did_fold else "")
+        return "S: {0: <2} {1: <28}  {2} {3}".format(self.score, "H: [{0}]".format(cards_to_string(self.hand)), "T: [{0}]".format(cards_to_string(self.table)), "F" if self.did_fold else "")
 
 class ToepGamePhase:
     def __init__(self, game):
         self.game = game
+        self.reset()
 
-        self.current_player = 0
-
-        self.round_number = 0
+    def reset(self, starting_player=0):
+        self.current_player = starting_player
+        self.trick_number = 0
         self.card_to_beat = None
 
     def copy(self, game):
@@ -87,7 +93,7 @@ class ToepGamePhase:
 
         phase.current_player = self.current_player
 
-        phase.round_number = self.round_number
+        phase.trick_number = self.trick_number
         phase.card_to_beat = self.card_to_beat
 
         return phase
@@ -95,11 +101,11 @@ class ToepGamePhase:
     def get_valid_actions(self):
         valid_actions = []
 
-        if self.game.betting_phase.last_player_to_raise != self.current_player and self.game.stake < 5:
+        if self.game.betting_phase.last_player_to_raise != self.current_player and self.game.stake < 15:
             valid_actions.append('t')
 
         if self.card_to_beat == None:
-            valid_actions += range(0, len(self.game.players[self.current_player].hand))
+            valid_actions.extend(range(0, len(self.game.players[self.current_player].hand)))
         else:
             cards_of_asked_suit = [idx for idx in range(0, len(self.game.players[self.current_player].hand)) if \
                                    self.game.players[self.current_player].hand[idx][1] == self.card_to_beat[0][1]]
@@ -112,9 +118,9 @@ class ToepGamePhase:
 
     def move(self, action):
         game = self.game.copy()
-        [reward, player_finished, game_finished] = game.game_phase.self_move(action)
+        game.game_phase.self_move(action)
 
-        return [game, reward, player_finished, game_finished]
+        return game
 
     def self_move(self, action):
         if not action in self.get_valid_actions():
@@ -137,22 +143,20 @@ class ToepGamePhase:
                 if self.card_to_beat[0][1] == card[1] and values.index(self.card_to_beat[0][0]) < values.index(card[0]):
                     self.card_to_beat = [card, self.current_player]
 
-            if self.round_finished():
-                self.round_number += 1
+            if self.trick_finished():
+                self.trick_number += 1
                 if self.game_finished():
-                    if self.card_to_beat[1] == self.current_player:
-                        return [0, True, True]
-                    else:
-                        return [-self.game.stake, True, True]
+                    for player_idx in range(0, len(self.game.players)):
+                        if player_idx != self.card_to_beat[1]:
+                            self.game.players[player_idx].score += self.game.stake
+                    self.game.reset_round((self.card_to_beat[1] + 1) % len(self.game.players))
                 else:
                     self.current_player = self.card_to_beat[1]
-                self.card_to_beat = None
+                    self.card_to_beat = None
             else:
                 self.next_player()
-        return [0, False, False]
 
-
-    def round_finished(self):
+    def trick_finished(self):
         table_lengths = np.array([len(player.table) for player in self.game.players])
         return np.all(table_lengths == table_lengths[0])
 
@@ -166,13 +170,15 @@ class ToepGamePhase:
             self.current_player = (self.current_player + 1) % len(self.game.players)
 
     def __str__(self):
-        return "CP: {0}  R: {1}  CB: {2}".format(self.current_player, self.round_number, card_to_string(self.card_to_beat[0]) if self.card_to_beat != None else "X")
+        return "CP: {0}  T: {1}  CB: {2}".format(self.current_player, self.trick_number, card_to_string(self.card_to_beat[0]) if self.card_to_beat != None else "X")
 
 class ToepBettingPhase:
     def __init__(self, game):
         self.game = game
+        self.reset()
 
-        self.current_player = 0
+    def reset(self, starting_player=0):
+        self.current_player = starting_player
         self.last_player_to_raise = None
 
     def copy(self, game):
@@ -186,39 +192,38 @@ class ToepBettingPhase:
     def get_valid_actions(self):
         valid_actions = ['c', 'f']
 
-        if self.last_player_to_raise != self.current_player and self.game.stake < 5:
+        if self.last_player_to_raise != self.current_player and self.game.stake < 15:
             valid_actions.append('t')
 
         return valid_actions
 
     def move(self, action):
         game = self.game.copy()
-        [reward, player_finished, game_finished] = game.betting_phase.self_move(action)
+        game.betting_phase.self_move(action)
 
-        return [game, reward, player_finished, game_finished]
+        return game
 
     def self_move(self, action):
         if not action in self.get_valid_actions():
-            return [-10, False, False]
+            return
 
-        reward = 0
-        game_finished = False
-        player_finished = False
         if action == 't':
             self.game.stake += 1
             self.last_player_to_raise = self.current_player
         if action == 'f':
             self.game.players[self.current_player].did_fold = True
-            reward = -(self.game.stake - 1)
-            player_finished = True
+            self.game.players[self.current_player].score += self.game.stake - 1
+
         self.next_player()
         if self.current_player == self.last_player_to_raise:
-            if self.game.get_winner() != None:
-                game_finished = True
-                player_finished = True
-            self.game.phase = self.game.game_phase
+            if self.game_finished():
+                round_winner = [player_idx for player_idx in range(0, len(self.game.players)) if not self.game.players[player_idx].did_fold][0]
+                self.game.reset_round((round_winner + 1) % len(self.game.players))
+            else:
+                self.game.phase = self.game.game_phase
 
-        return [reward, player_finished, game_finished]
+    def game_finished(self):
+        return len([player for player in self.game.players if not player.did_fold]) == 1
 
     def next_player(self):
         self.current_player = (self.current_player + 1) % len(self.game.players)
@@ -251,16 +256,27 @@ class ToepGame:
 
         return game
 
+    def reset_round(self, starting_player):
+        self.deck = Deck()
+        self.deck.shuffle()
+
+        for player in self.players:
+            player.reset_round(self.deck.deal(4))
+
+        self.stake = 1
+
+        self.game_phase.reset(starting_player)
+        self.betting_phase.reset()
+
+        self.phase = self.game_phase
+
     def get_valid_actions(self):
         return self.phase.get_valid_actions()
 
     def get_winner(self):
-        non_folded_players = [player_idx for player_idx in range(0, len(self.players)) if self.players[player_idx].did_fold == False]
-        if len(non_folded_players) == 1:
-            return non_folded_players[0]
-
-        if self.game_phase.game_finished():
-            return self.game_phase.card_to_beat[1]
+        non_losing_players = [player_idx for player_idx in range(0, len(self.players)) if self.players[player_idx].score < 15]
+        if len(non_losing_players) == 1:
+            return non_losing_players[0]
 
         return None
 
@@ -292,11 +308,13 @@ class RandomPolicy:
 def generate_episode(game, policy):
     states = [game]
 
-    game_finished = False
-    while not game_finished:
-        [new_game, reward, player_finished, game_finished] = game.move(policy.get_action(game))
+    while game.get_winner() == None:
+        print([player.score for player in game.players])
+        new_game = game.move(policy.get_action(game))
         states.append(new_game)
         game = new_game
+
+    print([player.score for player in game.players])
 
     return states
 
@@ -306,7 +324,6 @@ def print_episode(episode):
         print("-------")
 
 if __name__=="__main__":
-    #ipdb.set_trace()
     policy = RandomPolicy()
     game = ToepGame(2)
     episode = generate_episode(game, policy)
