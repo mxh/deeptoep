@@ -237,7 +237,7 @@ class ToepGame:
     def __init__(self, n_players=2):
         self.deck = Deck()
         self.deck.shuffle()
-        self.players = [PlayerState(self.deck.deal(4)) for _ in range(0, n_players)]
+        self.players = [PlayerState(sort_cards(self.deck.deal(4))) for _ in range(0, n_players)]
         self.stake = 1
 
         self.game_phase = ToepGamePhase(self)
@@ -261,7 +261,7 @@ class ToepGame:
         self.deck.shuffle()
 
         for player in self.players:
-            player.reset_round(self.deck.deal(4))
+            player.reset_round(sort_cards(self.deck.deal(4)))
 
         self.stake = 1
 

@@ -141,8 +141,8 @@ class ToepQNetwork:
       The ToepQNetwork takes a state vector s (a ToepState), and outputs the expected value of
       Q(s,a) for each action. It employs both Double Q-Learning (van Hasselt et al. 2016)
       and Dueling DQN (Wang et al. 2016).
-      """
-      def __init__(self):
+    """
+    def __init__(self):
         self.state_size = ToepState.STATE_SIZE
         with tf.variable_scope('Input'):
             self.state_input = tf.placeholder(shape=[None, self.state_size], dtype=tf.float32)
@@ -268,11 +268,11 @@ class ToepQNetworkTrainer:
         self.batch_size = 128
         self.gamma = 1
         self.start_boltzmann_temp = 1
-        self.end_boltzmann_temp = 0.1
-        self.boltzmann_steps = 100000
+        self.end_boltzmann_temp = 0.01
+        self.boltzmann_steps = 500000
         self.save_path = '/jobhunt/practice/toepen/nets'
         self.log_path = '/jobhunt/practice/toepen/logs'
-        self.load_model = True
+        self.load_model = False
 
         self.reset()
 
@@ -317,6 +317,8 @@ class ToepQNetworkTrainer:
             print("Loading model...")
             ckpt = tf.train.get_checkpoint_state(self.save_path)
             self.saver.restore(self.session, ckpt.model_checkpoint_path)
+            self.boltzmann_temp = self.end_boltzmann_temp
+            self.n_steps = self.boltzmann_steps
 
     def play_round(self, game, action):
         """
@@ -328,12 +330,12 @@ class ToepQNetworkTrainer:
         next_game = game.move(action)
         next_player_game = next_game.copy()
 
-        if next_game.players[orig_player].did_fold:
-            return [next_game, next_player_game]
-
         next_state = ToepState(next_game)
-        while next_game.phase.current_player != orig_player and next_game.get_winner() == None:
-            [action, _] = self.get_action(next_game, next_state, True)
+        while not next_game.players[orig_player].did_fold and next_game.phase.current_player != orig_player and next_game.get_winner() == None:
+            [action, _] = self.get_action(next_game, next_state)
+            
+            if (action == 'f'):
+                ipdb.set_trace()
 
             next_game = next_game.move(action)
             next_state = ToepState(next_game)
@@ -359,20 +361,14 @@ class ToepQNetworkTrainer:
             game = games[episode_idx].copy()
             state = ToepState(game)
 
-            if episode_idx == 0:
-                print(str(game))
-
             while game.get_winner() == None:
                 # select action according to greedy policy
-                [action, _] = self.get_action(game, state, True)
+                [action, _] = self.get_action(game, state)
 
                 [round_next, _, _] = self.play_round(game, action)
 
                 game = round_next
                 state = ToepState(game)
-
-                if episode_idx == 0:
-                    print(str(game))
 
             if game.get_winner() == 0:
                 overall_reward_first += 1
@@ -381,21 +377,21 @@ class ToepQNetworkTrainer:
 
         return [float(overall_reward_first) / n_games, float(overall_reward_second) / n_games]
 
-    def get_action(self, game, state, valid_only=False):
+    def get_action(self, game, state):#, valid_only=False):
         valid_actions = game.get_valid_actions()
 
         Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
 
-        if valid_only:
-            valid_action_indices = [action_name_to_idx[action] for action in valid_actions]
-            Q_valid = np.array([Q[idx] for idx in valid_action_indices])
-            Q_valid_softmax = softmax(Q_valid, self.boltzmann_temp)
-            action = valid_action_indices[np.random.choice(np.arange(0, len(Q_valid_softmax)), p=Q_valid_softmax)]
-            action = action_idx_to_name[action]
-        else:
-            Q_softmax = softmax(Q, self.boltzmann_temp)
-            action = np.random.choice(np.arange(0, len(Q_softmax)), p=Q_softmax)
-            action = action_idx_to_name[action]
+        #if valid_only:
+        valid_action_indices = [action_name_to_idx[action] for action in valid_actions]
+        Q_valid = np.array([Q[idx] for idx in valid_action_indices])
+        Q_valid_softmax = softmax(Q_valid, self.boltzmann_temp)
+        action = valid_action_indices[np.random.choice(np.arange(0, len(Q_valid_softmax)), p=Q_valid_softmax)]
+        action = action_idx_to_name[action]
+        #else:
+        #    Q_softmax = softmax(Q, self.boltzmann_temp)
+        #    action = np.random.choice(np.arange(0, len(Q_softmax)), p=Q_softmax)
+        #    action = action_idx_to_name[action]
 
         return [action, Q]
 
@@ -420,7 +416,7 @@ class ToepQNetworkTrainer:
                 action = random.choice(valid_actions)
                 Q = "NA"
             else:
-                [action, Q] = self.get_action(game, state, True)
+                [action, Q] = self.get_action(game, state)
 
             if verbose:
                 print("----------------------------------------------")
@@ -429,7 +425,7 @@ class ToepQNetworkTrainer:
                 print("action: {0}".format(action))
 
             #if action in game.get_valid_actions():
-                [round_next, game_next, reward] = self.play_round(game, action)
+            [round_next, game_next, reward] = self.play_round(game, action)
             #else:
             #    round_next = game.copy()
             #    game_next = game.copy()
@@ -441,7 +437,6 @@ class ToepQNetworkTrainer:
             state_next = ToepState(round_next)
 
             self.n_steps += 1
-            ep_steps += 1
             ep_buffer.add(np.reshape(np.array([state.state_vec, action_name_to_idx[action], reward, state_next.state_vec, reward == 1 or reward == -1]), [1, 5]))
 
             if self.n_steps > self.pretrain_steps:
@@ -450,21 +445,13 @@ class ToepQNetworkTrainer:
 
                 train_batch = self.experience_buffer.sample(self.batch_size)
 
-                action_predict = self.session.run(self.main_net.a_predict, feed_dict={self.main_net.state_input:   np.vstack(train_batch[:, 3])})
-                #main_val_predict  = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input:   np.vstack(train_batch[:, 3])})
-                #value_sorted_actions = np.argsort(-main_val_predict)
-                #valid_value_sorted_actions = np.full([self.batch_size, 7], False)
-                #for row_idx in range(0, self.batch_size):
-                #    valid_value_sorted_actions[row_idx, :] = np.isin(value_sorted_actions[row_idx, :], train_batch[row_idx, 4])
-
-                #action_predict = value_sorted_actions[range(self.batch_size), np.argmax(valid_value_sorted_actions, axis=1)]
-
+                action_predict     = self.session.run(self.main_net.a_predict,   feed_dict={self.main_net.state_input:   np.vstack(train_batch[:, 3])})
                 target_val_predict = self.session.run(self.target_net.Q_predict, feed_dict={self.target_net.state_input: np.vstack(train_batch[:, 3])})
 
+                # end states are treated differently - there is no future reward
                 end_multiplier = -(train_batch[:, 4] - 1)
 
-                # was: double_Q = value_predict[range(self.batch_size), action_predict]
-                double_Q = target_val_predict[range(self.batch_size), action_predict]
+                double_Q = target_val_predict[range(self.batch_size), action_predict] # need to specify range exactly for TF to fully know shape
                 target_Q = train_batch[:, 2] + (self.gamma * double_Q * end_multiplier)
 
                 [_, loss] = self.session.run([self.main_net.update_model, self.main_net.loss], \
@@ -472,6 +459,7 @@ class ToepQNetworkTrainer:
                                               self.main_net.target_Q: target_Q,\
                                               self.main_net.actions: train_batch[:, 1]})
 
+                ep_steps += 1
                 ep_loss += loss
 
                 for op in self.target_update_ops:
@@ -482,7 +470,7 @@ class ToepQNetworkTrainer:
 
         self.experience_buffer.add(ep_buffer.buffer)
 
-        return [game, ep_loss / ep_steps]
+        return [game, ep_loss / ep_steps if ep_steps > 0 else 0]
 
     def train(self, n_episodes):
         with tf.device('/gpu:0'):
