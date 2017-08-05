@@ -148,13 +148,13 @@ class ToepQNetwork:
             self.state_input = tf.placeholder(shape=[None, self.state_size], dtype=tf.float32)
             self.res_input = tf.reshape(self.state_input, shape=[-1, 1, self.state_size])
         with tf.variable_scope('FeatureExtraction'):
-            self.hidden_1 = slim.fully_connected(self.res_input, 512, activation_fn=None, scope='FeatureExtraction/Hidden1')
+            self.hidden_1 = slim.fully_connected(self.res_input, 128, activation_fn=None, scope='FeatureExtraction/Hidden_1')
             self.elu_1    = tf.nn.elu(self.hidden_1, 'elu_1')
 
-            self.hidden_2 = slim.fully_connected(self.elu_1,     256, activation_fn=None, scope='FeatureExtraction/Hidden2')
+            self.hidden_2 = slim.fully_connected(self.elu_1,      96,  activation_fn=None, scope='FeatureExtraction/Hidden_2')
             self.elu_2    = tf.nn.elu(self.hidden_2, 'elu_2')
 
-            self.hidden_3 = slim.fully_connected(self.elu_2,     128, activation_fn=None, scope='FeatureExtraction/Hidden3')
+            self.hidden_3 = slim.fully_connected(self.elu_2,      64,  activation_fn=None, scope='FeatureExtraction/Hidden_3')
             self.elu_3    = tf.nn.elu(self.hidden_3, 'elu_3')
 
         # split output into two streams; one for advantage and one for value (Dueling DQN)
@@ -195,7 +195,7 @@ class ToepQNetwork:
 
         with tf.variable_scope('Trainer'):
             self.global_step = tf.Variable(0, trainable=False)
-            self.learning_rate = tf.train.polynomial_decay(1e-5, self.global_step, 500000, 1e-7, power=0.5)
+            self.learning_rate = tf.train.polynomial_decay(1e-4, self.global_step, 500000, 1e-6, power=0.5)
 
             self.trainer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
             self.update_model = self.trainer.minimize(self.loss, global_step=self.global_step)
@@ -258,7 +258,7 @@ def softmax(x, t):
 
 class ToepQNetworkTrainer:
     def __init__(self):
-        self.tau = 0.01 # rate at which the target network is moved in direction of the main network
+        self.tau = 0.001 # rate at which the target network is moved in direction of the main network
 
         self.start_e = 1 
         self.end_e = 0.1
@@ -334,9 +334,6 @@ class ToepQNetworkTrainer:
         while not next_game.players[orig_player].did_fold and next_game.phase.current_player != orig_player and next_game.get_winner() == None:
             [action, _] = self.get_action(next_game, next_state)
             
-            if (action == 'f'):
-                ipdb.set_trace()
-
             next_game = next_game.move(action)
             next_state = ToepState(next_game)
 
