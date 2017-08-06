@@ -274,18 +274,15 @@ class ToepQNetworkTrainer:
     def __init__(self):
         self.tau = 0.001 # rate at which the target network is moved in direction of the main network
 
-        self.start_e = 1 
-        self.end_e = 0.1
-        self.e_steps = 500000
         self.pretrain_steps = 100000
-        self.n_episodes = 10000000
+        self.n_episodes = 100000
         self.batch_size = 128
         self.gamma = 1
         self.start_boltzmann_temp = 1
         self.end_boltzmann_temp = 0.01
         self.boltzmann_steps = 500000
-        self.save_path = '/jobhunt/practice/toepen/nets'
-        self.log_path = '/jobhunt/practice/toepen/logs'
+        self.save_path = 'nets'
+        self.log_path = 'logs'
         self.load_model = True
 
         self.reset()
@@ -395,16 +392,11 @@ class ToepQNetworkTrainer:
         Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec],
                                                                  self.main_net.valid_actions: [valid_actions_oh]})[0]
 
-        #if valid_only:
         valid_action_indices = [action_name_to_idx[action] for action in valid_actions]
         Q_valid = np.array([Q[idx] for idx in valid_action_indices])
         Q_valid_softmax = softmax(Q_valid, self.boltzmann_temp)
         action = valid_action_indices[np.random.choice(np.arange(0, len(Q_valid_softmax)), p=Q_valid_softmax)]
         action = action_idx_to_name[action]
-        #else:
-        #    Q_softmax = softmax(Q, self.boltzmann_temp)
-        #    action = np.random.choice(np.arange(0, len(Q_softmax)), p=Q_softmax)
-        #    action = action_idx_to_name[action]
 
         return [action, Q]
 
@@ -423,7 +415,7 @@ class ToepQNetworkTrainer:
         ep_loss = 0
         ep_steps = 0
         while game.get_winner() == None:
-            # select action according to eps-greedy policy
+            # if pre-training, we randomly select our actions
             if self.n_steps < self.pretrain_steps:
                 valid_actions = game.get_valid_actions()
                 action = random.choice(valid_actions)
@@ -437,12 +429,7 @@ class ToepQNetworkTrainer:
                 print("Q: {0}".format(Q))
                 print("action: {0}".format(action))
 
-            #if action in game.get_valid_actions():
             [round_next, game_next, reward] = self.play_round(game, action)
-            #else:
-            #    round_next = game.copy()
-            #    game_next = game.copy()
-            #    reward = -10
             if verbose:
                 print("reward: {0}".format(reward))
                 print("next game: \n{0}".format(str(game_next)))
@@ -454,7 +441,6 @@ class ToepQNetworkTrainer:
             ep_buffer.add(np.reshape(np.array([state.state_vec, action_name_to_idx[action], reward, state_next.state_vec, valid_actions_next, reward == 1 or reward == -1]), [1, 6]))
 
             if self.n_steps > self.pretrain_steps:
-                #ipdb.set_trace()
                 if self.boltzmann_temp > self.end_boltzmann_temp:
                     self.boltzmann_temp -= self.boltzmann_step
 
@@ -489,7 +475,7 @@ class ToepQNetworkTrainer:
 
         return [game, ep_loss / ep_steps if ep_steps > 0 else 0]
 
-    def train(self, n_episodes):
+    def train(self):
         with tf.device('/gpu:0'):
             for episode_idx in range(0, self.n_episodes):
                 verbose = episode_idx % 100 == 0
@@ -506,4 +492,4 @@ class ToepQNetworkTrainer:
 if __name__=="__main__":
     trainer = ToepQNetworkTrainer()
 
-    trainer.train(20000)
+    trainer.train()
