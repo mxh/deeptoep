@@ -18,6 +18,7 @@ def sort_cards(cards):
     return sorted_cards
 
 class Deck:
+    """ A piquet deck of 32 cards."""
     def __init__(self):
         self.cards = list(itertools.product(values, suits))
 
@@ -41,6 +42,7 @@ class Deck:
         return cards_to_string(self.cards)
 
 class PlayerState:
+    """ A class representing the current state of a player during a game of Toepen."""
     def __init__(self, hand=[]):
         self.score = 0
         self.reset_round(hand)
@@ -79,6 +81,7 @@ class PlayerState:
         return "S: {0: <2} {1: <28}  {2} {3}".format(self.score, "H: [{0}]".format(cards_to_string(self.hand)), "T: [{0}]".format(cards_to_string(self.table)), "F" if self.did_fold else "")
 
 class ToepGamePhase:
+    """ The phase of Toepen when cards are being played, i.e. when the stakes are not being raised. """
     def __init__(self, game):
         self.game = game
         self.reset()
@@ -173,6 +176,7 @@ class ToepGamePhase:
         return "CP: {0}  T: {1}  CB: {2}".format(self.current_player, self.trick_number, card_to_string(self.card_to_beat[0]) if self.card_to_beat != None else "X")
 
 class ToepBettingPhase:
+    """ The phase of Toepen when someone is raising the stakes, and others are calling, raising or folding. """
     def __init__(self, game):
         self.game = game
         self.reset()
@@ -234,6 +238,7 @@ class ToepBettingPhase:
         return "BR! CP: {0}".format(self.current_player)
 
 class ToepGame:
+    """ Class representing a state of a game of Toepen. """
     def __init__(self, n_players=2):
         self.deck = Deck()
         self.deck.shuffle()
