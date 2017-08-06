@@ -1,12 +1,24 @@
 # DeepToep
 
-This repository contains the code of DeepToep, a Deep Q-Learning AI for a
+This repository contains the code of DeepToep, a Deep Reinforcement Learning AI for a
 heads-up only variant of the Dutch card game
-(Toepen)[https://en.wikipedia.org/wiki/Toepen].
+[Toepen](https://en.wikipedia.org/wiki/Toepen). An explanation of the game can be found
+below.
+
+## DQN setup
+The AI is driven by a [Deep Q-Network setup](https://deepmind.com/research/dqn/), adapted
+with [Double Q-Learning](https://arxiv.org/abs/1509.06461) and [Dueling DQN](https://arxiv.org/abs/1511.06581).
+It uses Boltzmann exploration as action-selection strategy. It is entirely trained from self-play.
+
+### State representation
+TODO
 
 ## Performance
-I tested DeepToep against a number of heuristic strategies. It clearly beats each of them,
-as can be seen in the win rate table below. Better heuristics are conceivable, and I might
+I tested DeepToep, trained for 50000 episodes, against a number of heuristic
+strategies. Each pair is tested on 1000 random full games (from 0 to 15 points,
+see game play), switching the starting order every time (resulting in a 50/50
+split). DeepToep significantly out-performs each of them, as can be seen in the
+win rate table below. Of course, better heuristics are conceivable, and I might
 add these later.
 
 The strategies tested against are:
@@ -22,7 +34,7 @@ The strategies tested against are:
 
 The win-rates:
 
-|                   | DeepToep          | Random            | RandomNoFold      | LowestCard        | LowestCardNoFold  | HighestCard       | HighestCardNoFold |
+| Winner \ Loser    | DeepToep          | Random            | RandomNoFold      | LowestCard        | LowestCardNoFold  | HighestCard       | HighestCardNoFold |
 | ----------------- |------------------ | ----------------- | ----------------- | ----------------- | ----------------- | ----------------- | ----------------- |
 | DeepToep          | X                 | **93.50**         | **81.80**         | **89.00**         | **79.10**         | **85.60**         | **78.50**         |
 | Random            | 6.50              | X                 | 14.00             | 52.20             | 18.10             | 54.70             | 18.20             |
@@ -32,7 +44,7 @@ The win-rates:
 | HighestCard       | 14.40             | 45.30             | 24.70             | 51.70             | 48.70             | X                 | 47.40             |
 | HighestCardNoFold | 21.50             | 81.80             | 60.40             | 48.50             | 48.90             | 52.60             | X                 |
 
-## Game play
+## The game of Toepen
 Toepen is played with a 32-card deck, called a *piquet deck*. It is a subset of
 a regular 52-card deck, but with the 2s - 6s removed. The value ordering of the
 cards is different from most games. From low to high, the cards are ordered Jack,
