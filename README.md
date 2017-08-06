@@ -54,7 +54,7 @@ Bart has been dealt a less than ideal hand: Q&diams;, Q&spades; K&spades; 9&hear
 Remember, face cards are weak in Toepen, so knowing both starting hands we see that
 Andrea has quite the advantage.
 
-![The starting hands of our players Andrea and Bart](https://github.com/mxh/toepen/raw/master/img//assets/toep_example_game_start.png)
+![The starting hands of our players Andrea and Bart](https://github.com/mxh/toepen/raw/master/img/toep_example_game_start.png)
 
 ### Trick 1
 Andrea leads the first trick and plays the J&diams;, getting rid of her main
@@ -62,7 +62,7 @@ weakness. Bart has to follow suit and thus responds with the only diamonds card
 in his hand, the Q&diams;. This beats Andrea's Jack, and thus in trick 2, Bart
 will be the leading player.
 
-![After trick 1, Bart is the leading player](https://github.com/mxh/toepen/raw/master/img//assets/toep_example_game_trick_1.png)
+![After trick 1, Bart is the leading player](https://github.com/mxh/toepen/raw/master/img/toep_example_game_trick_1.png)
 
 ### Trick 2
 Bart does not have too many good options here, but decides most importantly to hold on to his 9&hearts; as his only
@@ -72,7 +72,7 @@ Andrea now knows she could just beat this card by playing the 8&spades;, but she
 pretty confident that she could win the last trick, and thus decides to raise the stakes of the game
 by toeping.
 
-![Andrea decides to raise the stakes](https://github.com/mxh/toepen/raw/master/img//assets/toep_example_game_trick_2_toep.png)
+![Andrea decides to raise the stakes](https://github.com/mxh/toepen/raw/master/img/toep_example_game_trick_2_toep.png)
 
 Bart knows his hand isn't fantastic, and knows he'll likely lose this trick as well as the next one, but he 
 is hoping for a low hearts card on the last trick, and decides to call (I'll leave it up to you to decide whether this is foolish or not).
@@ -86,11 +86,11 @@ and trick Andrea by bluffing - he decides to toep, feigning a high diamond card,
 does not believe Bart, and not only calls his bluff but raises him, taking the stake to 4. Bart does not reinforce his bluff
 and plays the K&spades; with his tail between his legs.
 
-![Bart's bluff fails miserably](https://github.com/mxh/toepen/raw/master/img//assets/toep_example_game_trick_3.png)
+![Bart's bluff fails miserably](https://github.com/mxh/toepen/raw/master/img/toep_example_game_trick_3.png)
 
 ### Final trick
 Finally, Andrea is left just with one move, which is a sure victory - she plays the 10&hearts;, the highest card in its suit.
 Bart perfunctorily responds with the 9&hearts;, and loses the game with a penalty of 4 points.
 
-![Andrea wins the round](https://github.com/mxh/toepen/raw/master/img//assets/toep_example_game_trick_4.png)
+![Andrea wins the round](https://github.com/mxh/toepen/raw/master/img/toep_example_game_trick_4.png)
 
