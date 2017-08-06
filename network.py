@@ -36,6 +36,13 @@ def cards_to_one_hot(cards, n_cards=-1):
 
     return oh
 
+def actions_to_one_hot(actions):
+    oh = np.zeros([7])
+    for action in actions:
+        oh[action_name_to_idx[action]] = 1
+
+    return oh > 0
+
 class ToepState:
     """Toep game state representation in form of feature vector.
 
@@ -147,6 +154,8 @@ class ToepQNetwork:
         with tf.variable_scope('Input'):
             self.state_input = tf.placeholder(shape=[None, self.state_size], dtype=tf.float32)
             self.res_input = tf.reshape(self.state_input, shape=[-1, 1, self.state_size])
+            self.valid_actions = tf.placeholder(shape=[None, n_actions], dtype=tf.bool)
+            self.res_valid_actions = tf.reshape(self.valid_actions, shape=[-1, 1, n_actions])
         with tf.variable_scope('FeatureExtraction'):
             self.hidden_1 = slim.fully_connected(self.res_input, 128, activation_fn=None, scope='FeatureExtraction/Hidden_1')
             self.elu_1    = tf.nn.elu(self.hidden_1, 'elu_1')
@@ -174,7 +183,10 @@ class ToepQNetwork:
             which stabilizes the optimization
             """
             self.Q_predict = self.value + tf.subtract(self.advantage, tf.reduce_mean(self.advantage, axis=1, keep_dims=True))
-            self.a_predict = tf.argmax(self.Q_predict, 1)
+
+            dummy_min = tf.constant(-100.0, shape=[128, n_actions])
+            self.Q_valid = tf.where(self.valid_actions, self.Q_predict, dummy_min)
+            self.a_predict = tf.arg_max(self.Q_valid, 1)
 
         with tf.variable_scope('TargetQ'):
             """
@@ -215,7 +227,7 @@ class ToepExperienceBuffer:
         self.buffer.extend(experience)
 
     def sample(self, size):
-        return np.reshape(np.array(random.sample(self.buffer, size)), [size, 5])
+        return np.reshape(np.array(random.sample(self.buffer, size)), [size, 6])
 
 def update_target_network_op(variables, tau):
     """
@@ -253,7 +265,9 @@ def get_highest_valid_action(Q, valid_actions):
     return action
 
 def softmax(x, t):
-    e_x = np.exp(x / t)
+    x_t = x / t
+    x_shift = x_t - np.max(x_t)
+    e_x = np.exp(x_shift)
     return e_x / np.sum(e_x)
 
 class ToepQNetworkTrainer:
@@ -263,7 +277,7 @@ class ToepQNetworkTrainer:
         self.start_e = 1 
         self.end_e = 0.1
         self.e_steps = 500000
-        self.pretrain_steps = 10000
+        self.pretrain_steps = 100000
         self.n_episodes = 10000000
         self.batch_size = 128
         self.gamma = 1
@@ -272,7 +286,7 @@ class ToepQNetworkTrainer:
         self.boltzmann_steps = 500000
         self.save_path = '/jobhunt/practice/toepen/nets'
         self.log_path = '/jobhunt/practice/toepen/logs'
-        self.load_model = False
+        self.load_model = True
 
         self.reset()
 
@@ -376,8 +390,10 @@ class ToepQNetworkTrainer:
 
     def get_action(self, game, state):#, valid_only=False):
         valid_actions = game.get_valid_actions()
+        valid_actions_oh = actions_to_one_hot(valid_actions)
 
-        Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec]})[0]
+        Q = self.session.run(self.main_net.Q_predict, feed_dict={self.main_net.state_input: [state.state_vec],
+                                                                 self.main_net.valid_actions: [valid_actions_oh]})[0]
 
         #if valid_only:
         valid_action_indices = [action_name_to_idx[action] for action in valid_actions]
@@ -432,21 +448,25 @@ class ToepQNetworkTrainer:
                 print("next game: \n{0}".format(str(game_next)))
 
             state_next = ToepState(round_next)
+            valid_actions_next = actions_to_one_hot(round_next.get_valid_actions())
 
             self.n_steps += 1
-            ep_buffer.add(np.reshape(np.array([state.state_vec, action_name_to_idx[action], reward, state_next.state_vec, reward == 1 or reward == -1]), [1, 5]))
+            ep_buffer.add(np.reshape(np.array([state.state_vec, action_name_to_idx[action], reward, state_next.state_vec, valid_actions_next, reward == 1 or reward == -1]), [1, 6]))
 
             if self.n_steps > self.pretrain_steps:
+                #ipdb.set_trace()
                 if self.boltzmann_temp > self.end_boltzmann_temp:
                     self.boltzmann_temp -= self.boltzmann_step
 
                 train_batch = self.experience_buffer.sample(self.batch_size)
 
-                action_predict     = self.session.run(self.main_net.a_predict,   feed_dict={self.main_net.state_input:   np.vstack(train_batch[:, 3])})
-                target_val_predict = self.session.run(self.target_net.Q_predict, feed_dict={self.target_net.state_input: np.vstack(train_batch[:, 3])})
+                action_predict     = self.session.run(self.main_net.a_predict,   feed_dict={self.main_net.state_input:     np.vstack(train_batch[:, 3]),\
+                                                                                            self.main_net.valid_actions:   np.vstack(train_batch[:, 4])})
+                target_val_predict = self.session.run(self.target_net.Q_predict, feed_dict={self.target_net.state_input:   np.vstack(train_batch[:, 3]),\
+                                                                                            self.target_net.valid_actions: np.vstack(train_batch[:, 4])})
 
                 # end states are treated differently - there is no future reward
-                end_multiplier = -(train_batch[:, 4] - 1)
+                end_multiplier = -(train_batch[:, 5] - 1)
 
                 double_Q = target_val_predict[range(self.batch_size), action_predict] # need to specify range exactly for TF to fully know shape
                 target_Q = train_batch[:, 2] + (self.gamma * double_Q * end_multiplier)
@@ -479,7 +499,7 @@ class ToepQNetworkTrainer:
                 if episode_idx % 100 == 0:
                     test_result = self.test_rounds(10)
                     print("Episode {0} P1 {1} P2 {2} L {3} BT {4}".format(episode_idx, test_result[0], test_result[1], ep_loss, self.boltzmann_temp))
-                if episode_idx > 0 and episode_idx % 5000 == 0:
+                if episode_idx > 0 and episode_idx % 2000 == 0:
                     self.saver.save(self.session, os.path.join(self.save_path, "model_{0:02d}.ckpt".format(episode_idx)))
                     print("Saved model")
 
